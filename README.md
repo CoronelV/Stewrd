@@ -1,16 +1,28 @@
-# 🚀 Stewrd: Multi-Source Data Sync & Masking Agent
+# Stewrd: Multi-Source Data Sync & Masking Agent
 
-[![License](https://img.shields.io/badge/License-PolyForm_Noncommercial-blue.svg)](LICENSE)
+<p align="center">
+  <img src="docs/assets/mainBanner.jpeg" alt="Stewrd Orchestrator Engine with Stats" width="800"/>
+</p>
 
-Stewrd is an advanced data synchronization and masking tool migrating records from multiple sources to multiple destinations concurrently. It compiles into a single binary containing a Go backend, React UI, SQLite checkpointing, and SSM/SSH tunnels. Strictly for non-commercial use.
+
+<p align="center">
+    <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-PolyForm_Noncommercial-blue.svg" alt="License">
+  </a>
+</p>
+
+Stewrd is an advanced data synchronization and masking tool migrating records from multiple sources to multiple destinations concurrently. It compiles into a single binary containing a Go backend, React UI, SQLite checkpointing, and SSM/SSH tunnels.
 
 ## 📖 Table of Contents
-- [General Architecture](#general-architecture)
-- [Key Features](#key-features)
-- [Project Structure (Monorepo)](#project-structure-monorepo)
-- [Deployment and Execution](#deployment-and-execution)
-- [Development Standards & Commits](#development-standards--commits)
-- [License](#license)
+- [Stewrd: Multi-Source Data Sync \& Masking Agent](#stewrd-multi-source-data-sync--masking-agent)
+  - [📖 Table of Contents](#-table-of-contents)
+  - [🏗️ General Architecture](#️-general-architecture)
+  - [✨ Key Features](#-key-features)
+  - [📂 Project Structure (Monorepo)](#-project-structure-monorepo)
+  - [🚀 Deployment and Execution](#-deployment-and-execution)
+    - [Standard Deployment](#standard-deployment)
+  - [🛠️ Development Standards \& Commits](#️-development-standards--commits)
+  - [⚖️ License](#️-license)
 
 ## 🏗️ General Architecture
 
@@ -124,11 +136,6 @@ The project separates responsibilities strictly based on SOLID principles:
 Deploying Stewrd requires only two files:
 1.  The Go compiled binary.
 2.  The `appsettings.yaml` configuration file.
-
-### Ephemeral Environments (Cloud/Containers)
-When running in containers (Docker, Kubernetes, AWS ECS) where local disks are ephemeral:
-1.  Map the database path (e.g., `./data/job_management.db`) to a **persistent volume** (like AWS EFS or a Docker Volume).
-2.  Provide the same `${SQLITE_SECRET_KEY}` environment variable to replacement instances so they can decrypt the SQLite file and resume pending tasks.
 
 ## 🛠️ Development Standards & Commits
 
