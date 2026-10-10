@@ -1,7 +1,9 @@
 import React from 'react';
-import { Card, CardHeader, CardContent, Separator, Chip } from '@heroui/react';
+import { Card, CardHeader, CardContent, Separator, Chip, Spinner } from '@heroui/react';
 import { ArrowRight, Activity, Clock } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
+import { getTelemetry } from '../api/connectionsApi';
+import { useEffect } from 'react';
 import type { ConnectionStatus, DatabaseInfo, RunningJobInfo, ConnectionStats } from '../store/useAppStore';
 import { dashboardTheme } from '../constants/ui/themeConstants';
 
@@ -71,24 +73,24 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
             </div>
           </div>
 
-          {info.telemetry && (
+          {(info.status === 'active' || info.status === 'pending') && (
             <>
               <Separator />
               <div className="grid grid-cols-4 gap-2">
-                <div className="flex flex-col items-center px-2 bg-default-100 rounded-lg">
-                  <span className="text-md font-bold">{info.telemetry.cpuUsage}%</span>
+                <div className="flex flex-col items-center justify-center px-2 py-1 bg-default-100 rounded-lg min-h-[60px]">
+                  {info.status === 'pending' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.cpuUsage}%</span> : <Spinner size="sm" className="mb-1" />)}
                   <span className="text-xs text-foreground/50">CPU</span>
                 </div>
-                <div className="flex flex-col items-center px-2 bg-default-100 rounded-lg">
-                  <span className="text-md font-bold">{info.telemetry.memoryUsage}%</span>
+                <div className="flex flex-col items-center justify-center px-2 py-1 bg-default-100 rounded-lg min-h-[60px]">
+                  {info.status === 'pending' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.memoryUsage}%</span> : <Spinner size="sm" className="mb-1" />)}
                   <span className="text-xs text-foreground/50">Mem</span>
                 </div>
-                <div className="flex flex-col items-center px-2 bg-default-100 rounded-lg">
-                  <span className="text-md font-bold">{info.telemetry.diskUsage}%</span>
+                <div className="flex flex-col items-center justify-center px-2 py-1 bg-default-100 rounded-lg min-h-[60px]">
+                  {info.status === 'pending' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.diskUsage} MB</span> : <Spinner size="sm" className="mb-1" />)}
                   <span className="text-xs text-foreground/50">Disk</span>
                 </div>
-                <div className="flex flex-col items-center px-2 bg-default-100 rounded-lg">
-                  <span className="text-md font-bold">{info.telemetry.activeConnections}</span>
+                <div className="flex flex-col items-center justify-center px-2 py-1 bg-default-100 rounded-lg min-h-[60px]">
+                  {info.status === 'pending' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.activeConnections}</span> : <Spinner size="sm" className="mb-1" />)}
                   <span className="text-xs text-foreground/50">Conns</span>
                 </div>
               </div>
@@ -205,7 +207,35 @@ const RunningJobCard: React.FC<{ jobInfo: RunningJobInfo | null }> = ({ jobInfo 
 };
 
 const Dashboard: React.FC = () => {
-  const { sourceDb, targetDb, runningJob } = useAppStore();
+  const { sourceDb, targetDb, runningJob, updateSourceTelemetry, config } = useAppStore();
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchTel = async () => {
+      const state = useAppStore.getState();
+      if (!state.sourceDb || state.sourceDb.status !== 'active') return;
+      try {
+        const tel = await getTelemetry();
+        if (mounted) {
+          updateSourceTelemetry({
+            cpuUsage: tel.cpuUsage,
+            memoryUsage: tel.memoryUsage,
+            diskUsage: Math.round(tel.diskUsage),
+            activeConnections: tel.activeConnections,
+          });
+        }
+      } catch (err) {
+        console.error("Telemetry failed", err);
+      }
+    };
+    
+    fetchTel();
+    const intv = setInterval(fetchTel, config.telemetryInterval * 1000);
+    return () => {
+      mounted = false;
+      clearInterval(intv);
+    };
+  }, [config.telemetryInterval]);
 
   return (
     <div className="flex flex-col gap-6">

@@ -3,14 +3,15 @@ package frontend
 import (
 	"embed"
 	"io/fs"
-
-	appErrors "github.com/CoronelV/Stewrd/internal/errors"
 )
 
 const distDirectory = "dist"
 
+// Requires `npm run build` first: the build fails if frontend/dist does not exist.
+//
+//go:embed all:dist
 var distFs embed.FS
 
 func DistFs() (fs.FS, error) {
-	panic(appErrors.ErrNotImplemented)
+	return fs.Sub(distFs, distDirectory)
 }

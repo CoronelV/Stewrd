@@ -1,7 +1,11 @@
 package config
 
 import (
+	stdErrors "errors"
+	"os"
 	"time"
+
+	"gopkg.in/yaml.v3"
 
 	appErrors "github.com/CoronelV/Stewrd/internal/errors"
 )
@@ -80,10 +84,41 @@ type ConnectionSettings struct {
 	Ssm      *SsmSettings     `yaml:"ssm,omitempty"`
 }
 
+func defaultSettings() *AppSettings {
+	return &AppSettings{
+		Server: ServerSettings{
+			Host:            "127.0.0.1",
+			Port:            8080,
+			ShutdownTimeout: 10 * time.Second,
+		},
+		Logger: LoggerSettings{Level: "info", Format: "text"},
+	}
+}
+
+// Load reads the YAML settings file over the defaults. A missing file is not
+// an error: the defaults are returned.
 func Load(path string) (*AppSettings, error) {
-	panic(appErrors.ErrNotImplemented)
+	settings := defaultSettings()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if stdErrors.Is(err, os.ErrNotExist) {
+			return settings, nil
+		}
+		return nil, appErrors.New(appErrors.CodeValidation, "cannot read settings file "+path, err)
+	}
+	if err := yaml.Unmarshal(data, settings); err != nil {
+		return nil, appErrors.New(appErrors.CodeValidation, "invalid settings file "+path, err)
+	}
+	return settings, nil
 }
 
 func (s *AppSettings) Validate() error {
-	panic(appErrors.ErrNotImplemented)
+	if s.Server.Port < 1 || s.Server.Port > 65535 {
+		return appErrors.New(appErrors.CodeValidation, "server.port must be between 1 and 65535", nil)
+	}
+	if s.Server.ShutdownTimeout <= 0 {
+		return appErrors.New(appErrors.CodeValidation, "server.shutdownTimeout must be positive", nil)
+	}
+	return nil
 }

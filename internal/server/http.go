@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 
+	"github.com/CoronelV/Stewrd/internal/domain"
 	appErrors "github.com/CoronelV/Stewrd/internal/errors"
 	"github.com/CoronelV/Stewrd/internal/logger"
 	"github.com/CoronelV/Stewrd/internal/service"
@@ -13,14 +14,17 @@ const (
 	pathParamJobId  = "jobId"
 	pathParamTaskId = "taskId"
 
-	routeHealth      = apiPrefix + "/health"
-	routeJobStatuses = apiPrefix + "/jobStatuses"
-	routeJobs        = apiPrefix + "/jobs"
-	routeJobById     = routeJobs + "/{" + pathParamJobId + "}"
-	routeJobStart    = routeJobById + "/start"
-	routeJobCancel   = routeJobById + "/cancel"
-	routeJobTasks    = routeJobById + "/tasks"
-	routeTaskById    = apiPrefix + "/tasks/{" + pathParamTaskId + "}"
+	routeHealth         = apiPrefix + "/health"
+	routeJobStatuses    = apiPrefix + "/jobStatuses"
+	routeJobs           = apiPrefix + "/jobs"
+	routeJobById        = routeJobs + "/{" + pathParamJobId + "}"
+	routeJobStart       = routeJobById + "/start"
+	routeJobCancel      = routeJobById + "/cancel"
+	routeJobTasks       = routeJobById + "/tasks"
+	routeTaskById       = apiPrefix + "/tasks/{" + pathParamTaskId + "}"
+	routeConnectionTest = apiPrefix + "/connections/test"
+	routeConnectionSave = apiPrefix + "/connections/save"
+	routeConnectionTelemetry = apiPrefix + "/connections/telemetry"
 )
 
 const (
@@ -40,26 +44,49 @@ const (
 	patternGetTask      = http.MethodGet + " " + routeTaskById     // 200 TableTask | 404
 	patternUpdateTask   = http.MethodPut + " " + routeTaskById     // 200 TableTask | 404 | 409
 	patternDeleteTask   = http.MethodDelete + " " + routeTaskById  // 204 | 404 | 409
+
+	patternTestConnection = http.MethodPost + " " + routeConnectionTest
+	patternSaveConnection = http.MethodPost + " " + routeConnectionSave
+	patternGetTelemetry = http.MethodGet + " " + routeConnectionTelemetry
 )
 
 type httpHandlers struct {
-	jobs    service.JobService
-	tasks   service.TaskService
-	catalog service.CatalogService
-	logger  logger.Logger
+	jobs        service.JobService
+	tasks       service.TaskService
+	catalog     service.CatalogService
+	connections service.ConnectionService
+	logger      logger.Logger
 }
 
-func newHttpHandlers(jobs service.JobService, tasks service.TaskService, catalog service.CatalogService, log logger.Logger) *httpHandlers {
-	return &httpHandlers{jobs: jobs, tasks: tasks, catalog: catalog, logger: log}
+func newHttpHandlers(jobs service.JobService, tasks service.TaskService, catalog service.CatalogService, connections service.ConnectionService, log logger.Logger) *httpHandlers {
+	return &httpHandlers{jobs: jobs, tasks: tasks, catalog: catalog, connections: connections, logger: log}
 }
 
+// register wires only the implemented endpoints; the job/task handlers below
+// are not registered until their services are implemented.
 func (h *httpHandlers) register(mux *http.ServeMux) {
-	panic(appErrors.ErrNotImplemented)
+	mux.HandleFunc(patternHealth, h.health)
+	mux.HandleFunc(patternTestConnection, h.testConnection)
+	mux.HandleFunc(patternSaveConnection, h.saveConnection)
+	mux.HandleFunc(patternGetTelemetry, h.getTelemetry)
 }
-
 
 func (h *httpHandlers) health(w http.ResponseWriter, r *http.Request) {
-	panic(appErrors.ErrNotImplemented)
+	writeJson(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *httpHandlers) testConnection(w http.ResponseWriter, r *http.Request) {
+	input, err := decodeJson[domain.SshMysqlConnection](r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	result, err := h.connections.TestSshMysql(r.Context(), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, result)
 }
 
 func (h *httpHandlers) listJobStatuses(w http.ResponseWriter, r *http.Request) {
@@ -112,4 +139,26 @@ func (h *httpHandlers) updateTask(w http.ResponseWriter, r *http.Request) {
 
 func (h *httpHandlers) deleteTask(w http.ResponseWriter, r *http.Request) {
 	panic(appErrors.ErrNotImplemented)
+}
+
+func (h *httpHandlers) saveConnection(w http.ResponseWriter, r *http.Request) {
+	input, err := decodeJson[domain.SshMysqlConnection](r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := h.connections.SaveActiveSshMysql(r.Context(), input); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *httpHandlers) getTelemetry(w http.ResponseWriter, r *http.Request) {
+	telemetry, err := h.connections.GetTelemetry(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, telemetry)
 }

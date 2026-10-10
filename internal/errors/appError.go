@@ -22,17 +22,29 @@ type AppError struct {
 }
 
 func New(code ErrorCode, message string, cause error) *AppError {
-	panic(ErrNotImplemented)
+	return &AppError{Code: code, Message: message, Cause: cause}
 }
 
 func (e *AppError) Error() string {
-	panic(ErrNotImplemented)
+	if e.Cause == nil {
+		return e.Message
+	}
+	return e.Message + ": " + e.Cause.Error()
 }
 
 func (e *AppError) Unwrap() error {
-	panic(ErrNotImplemented)
+	return e.Cause
 }
 
+// CodeOf returns the ErrorCode of the first AppError in the chain,
+// CodeNotImplemented for ErrNotImplemented, or CodeInternal otherwise.
 func CodeOf(err error) ErrorCode {
-	panic(ErrNotImplemented)
+	var appErr *AppError
+	if stdErrors.As(err, &appErr) {
+		return appErr.Code
+	}
+	if stdErrors.Is(err, ErrNotImplemented) {
+		return CodeNotImplemented
+	}
+	return CodeInternal
 }

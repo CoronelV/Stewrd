@@ -3,9 +3,11 @@ import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@heroui/react';
 import Dashboard from './components/Dashboard';
 import { useAppStore } from './store/useAppStore';
-import { LayoutDashboard, Unplug, ArrowRightLeft, Sun, Moon, Menu, ChevronLeft } from 'lucide-react';
+import { LayoutDashboard, Unplug, Sun, Moon, Menu, ChevronLeft, Settings } from 'lucide-react';
 
-import SetupSourceDB from './components/SetupSourceDB';
+import SetupSourceDB from './components/setup-source/SetupSourceDB';
+import Configuration from './components/Configuration';
+import NotificationCenter from './components/NotificationCenter';
 
 const App: React.FC = () => {
   const location = useLocation();
@@ -17,17 +19,19 @@ const App: React.FC = () => {
   useEffect(() => {
     document.documentElement.classList.remove('light', 'dark');
     document.documentElement.classList.add(theme);
+    document.documentElement.style.colorScheme = theme;
   }, [theme]);
 
   const menuItems = [
     { label: 'Dashboard', path: '/', icon: <LayoutDashboard size={20} /> },
     { label: 'Set up source DB', path: '/setup-source', icon: <Unplug size={20} /> },
     { label: 'Set up target DB', path: '/setup-target', icon: <Unplug size={20} /> },
-    { label: 'Create job', path: '/create-job', icon: <ArrowRightLeft size={20} /> },
+    { label: 'Configuration', path: '/configuration', icon: <Settings size={20} /> },
   ];
 
   return (
     <div className="relative flex h-screen w-full bg-background overflow-hidden text-foreground">
+      <NotificationCenter />
       {/* Top Right Logo (Visible only when sidebar is collapsed) */}
       {!isSidebarOpen && (
         <div className="absolute top-6 right-8 text-foreground/60 opacity-60 font-bold text-2xl tracking-widest pointer-events-none select-none z-50 animate-appearance-in">
@@ -91,7 +95,7 @@ const App: React.FC = () => {
           <Route path="/" element={<Dashboard />} />
           <Route path="/setup-source" element={<SetupSourceDB />} />
           <Route path="/setup-target" element={<div>Set up target DB - Placeholder</div>} />
-          <Route path="/create-job" element={<div>Create job - Placeholder</div>} />
+          <Route path="/configuration" element={<Configuration />} />
         </Routes>
       </main>
     </div>
