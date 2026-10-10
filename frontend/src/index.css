@@ -1,0 +1,23 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+
+@theme {
+  --color-primary: #006FEE;
+  --color-success: #17C964;
+  --color-warning: #F5A524;
+  --color-danger: #F31260;
+  --color-default: #d4d4d8;
+}
+
+@utility bg-success {
+  background-color: var(--success);
+}
+@utility bg-danger {
+  background-color: var(--danger);
+}
+@utility bg-warning {
+  background-color: var(--warning);
+}
+
+@source "../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}";
+@custom-variant dark (&:is(.dark *));
