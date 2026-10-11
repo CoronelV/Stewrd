@@ -22,8 +22,21 @@ type MysqlEndpoint struct {
 }
 
 type SshMysqlConnection struct {
-	Ssh   SshTunnelSettings `json:"ssh"`
-	Mysql MysqlEndpoint     `json:"mysql"`
+	Target      string            `json:"target,omitempty"`
+	Environment string            `json:"environment,omitempty"`
+	ChannelType string            `json:"channelType,omitempty"`
+	Ssh         SshTunnelSettings `json:"ssh"`
+	Mysql       MysqlEndpoint     `json:"mysql"`
+}
+
+type ActiveConnectionInfo struct {
+	Target      string              `json:"target"`
+	Status      string              `json:"status"`
+	DbName      string              `json:"dbName"`
+	ChannelType string              `json:"channelType"`
+	Username    string              `json:"username"`
+	Environment string              `json:"environment"`
+	Connection  *SshMysqlConnection `json:"connection,omitempty"`
 }
 
 type ConnectionTestResult struct {
@@ -36,4 +49,33 @@ type TelemetryResponse struct {
 	MemoryUsage       int     `json:"memoryUsage"`
 	DiskUsageMB       float64 `json:"diskUsage"`
 	ActiveConnections int     `json:"activeConnections"`
+}
+
+type ColumnSchema struct {
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	IsNullable   bool   `json:"isNullable"`
+	IsPrimaryKey bool   `json:"isPrimaryKey"`
+	IsForeignKey bool   `json:"isForeignKey"`
+}
+
+type TableRelation struct {
+	ConstraintName string `json:"constraintName"`
+	SourceTable    string `json:"sourceTable"`
+	SourceColumn   string `json:"sourceColumn"`
+	TargetTable    string `json:"targetTable"`
+	TargetColumn   string `json:"targetColumn"`
+}
+
+type TableSchema struct {
+	Name    string         `json:"name"`
+	Columns []ColumnSchema `json:"columns"`
+}
+
+type DatabaseSchemaResponse struct {
+	DatabaseName     string          `json:"databaseName"`
+	Schema           string          `json:"schema"`
+	AvailableSchemas []string        `json:"availableSchemas,omitempty"`
+	Tables           []TableSchema   `json:"tables"`
+	Relations        []TableRelation `json:"relations"`
 }

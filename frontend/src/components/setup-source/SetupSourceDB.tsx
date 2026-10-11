@@ -84,6 +84,9 @@ const SetupSourceDB: React.FC = () => {
     try {
       if (connectionMethod === 'ssh') {
         await saveConnection({
+          target: 'source',
+          environment: environment,
+          channelType: 'SSH Tunnel',
           ssh: {
             host: sshHost,
             port: Number(sshPort),
@@ -98,17 +101,17 @@ const SetupSourceDB: React.FC = () => {
             password: password,
             schema: dbName,
           }
-        });
+        }, 'source');
       } else {
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
 
       setSourceDb({
-        type: 'Source',
+        target: 'source',
         status: 'active',
-        dbName: dbName || 'default_db',
+        dbName: dbName,
         channelType: connectionMethod === 'ssh' ? 'SSH Tunnel' : 'AWS SSM',
-        username: username || sshUsername || 'admin',
+        username: username,
         environment: environment,
       });
 

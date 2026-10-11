@@ -1,5 +1,23 @@
-import type { SshMysqlConnectionInput, TelemetryRequest, TelemetryResponse } from './requests.interface';
-export type { SshMysqlConnectionInput, TelemetryRequest, TelemetryResponse } from './requests.interface';
+import type {
+  SshMysqlConnectionInput,
+  ActiveConnectionInfo,
+  ConnectionTarget,
+  TelemetryRequest,
+  TelemetryResponse,
+  DatabaseSchemaResponse,
+} from './requests.interface';
+
+export type {
+  SshMysqlConnectionInput,
+  ActiveConnectionInfo,
+  ConnectionTarget,
+  TelemetryRequest,
+  TelemetryResponse,
+  ColumnSchema,
+  TableRelation,
+  TableSchema,
+  DatabaseSchemaResponse,
+} from './requests.interface';
 
 export interface ConnectionTestResult {
   serverVersion: string;
@@ -57,8 +75,11 @@ export const testConnection = (input: SshMysqlConnectionInput) =>
   post<SshMysqlConnectionInput, ConnectionTestResult>('/connections/test', input);
 
 
-export async function saveConnection(req: any): Promise<void> {
-  const res = await fetch('/api/connections/save', {
+export async function saveConnection(
+  req: SshMysqlConnectionInput,
+  target: ConnectionTarget = 'source',
+): Promise<void> {
+  const res = await fetch(`/api/connections/save?target=${encodeURIComponent(target)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
@@ -67,6 +88,21 @@ export async function saveConnection(req: any): Promise<void> {
     throw new ApiRequestError('Failed to save connection', String(res.status));
   }
 }
+
+export async function getActiveConnection(
+  target: ConnectionTarget,
+): Promise<ActiveConnectionInfo | null> {
+  const res = await fetch(`/api/connections/active?target=${encodeURIComponent(target)}`);
+  const json = await res.json();
+  if (!res.ok || !json.status) {
+    throw new ApiRequestError(
+      json?.error?.summary ?? 'Failed to get active connection',
+      json?.error?.detailed ?? String(res.status),
+    );
+  }
+  return json.data;
+}
+
 
 export async function getTelemetry(req?: TelemetryRequest): Promise<TelemetryResponse> {
   const query = req?.target ? `?target=${encodeURIComponent(req.target)}` : '';
@@ -77,3 +113,23 @@ export async function getTelemetry(req?: TelemetryRequest): Promise<TelemetryRes
   }
   return json.data;
 }
+
+export async function getSchema(
+  target: ConnectionTarget = 'source',
+  schema?: string,
+): Promise<DatabaseSchemaResponse> {
+  const query = schema
+    ? `?target=${encodeURIComponent(target)}&schema=${encodeURIComponent(schema)}`
+    : `?target=${encodeURIComponent(target)}`;
+  const res = await fetch(`/api/connections/schema${query}`);
+  const json = await res.json();
+  if (!res.ok || !json.status) {
+    throw new ApiRequestError(
+      json?.error?.summary ?? 'Failed to get schema',
+      json?.error?.detailed ?? String(res.status),
+    );
+  }
+  return json.data;
+}
+
+

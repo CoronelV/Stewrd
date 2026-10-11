@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"database/sql"
+	"io"
 	"net"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -25,13 +27,16 @@ type ConnectionService interface {
 	// TestSshMysql opens the SSH tunnel, connects to MySQL through it and
 	// runs a trivial query. Everything is closed before returning.
 	TestSshMysql(ctx context.Context, input domain.SshMysqlConnection) (*domain.ConnectionTestResult, error)
-	SaveActiveSshMysql(ctx context.Context, input domain.SshMysqlConnection) error
+	SaveActiveSshMysql(ctx context.Context, target string, input domain.SshMysqlConnection) error
+	GetActiveConnection(ctx context.Context, target string) (*domain.ActiveConnectionInfo, error)
 	GetTelemetry(ctx context.Context) (*domain.TelemetryResponse, error)
+	GetSchema(ctx context.Context, target string, requestedSchema string) (*domain.DatabaseSchemaResponse, error)
 }
 
 type connectionService struct {
-	logger logger.Logger
-	activeConnection *domain.SshMysqlConnection
+	logger                 logger.Logger
+	activeConnection       *domain.SshMysqlConnection
+	activeTargetConnection *domain.SshMysqlConnection
 }
 
 var _ ConnectionService = (*connectionService)(nil)
@@ -40,20 +45,7 @@ func NewConnectionService(log logger.Logger) ConnectionService {
 	return &connectionService{logger: log}
 }
 
-func (s *connectionService) TestSshMysql(ctx context.Context, input domain.SshMysqlConnection) (*domain.ConnectionTestResult, error) {
-	if err := validateMysqlEndpoint(&input.Mysql); err != nil {
-		return nil, err
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, connectionTestTimeout)
-	defer cancel()
-
-	// Credentials are deliberately never logged.
-	log := s.logger.With(
-		logger.Field{Key: "sshHost", Value: input.Ssh.Host},
-		logger.Field{Key: "mysqlHost", Value: input.Mysql.Host},
-	)
-
+func (s *connectionService) openMysqlSession(ctx context.Context, input domain.SshMysqlConnection) (*sql.DB, io.Closer, error) {
 	tun, err := tunnel.Open(ctx, tunnel.Config{
 		Host:                  input.Ssh.Host,
 		Port:                  input.Ssh.Port,
@@ -64,10 +56,8 @@ func (s *connectionService) TestSshMysql(ctx context.Context, input domain.SshMy
 		InsecureIgnoreHostKey: input.Ssh.InsecureIgnoreHostKey,
 	})
 	if err != nil {
-		log.Error("ssh tunnel failed", err)
-		return nil, err
+		return nil, nil, err
 	}
-	defer tun.Close()
 
 	mysqlConfig := mysql.NewConfig()
 	mysqlConfig.User = input.Mysql.User
@@ -80,11 +70,34 @@ func (s *connectionService) TestSshMysql(ctx context.Context, input domain.SshMy
 
 	connector, err := mysql.NewConnector(mysqlConfig)
 	if err != nil {
-		return nil, appErrors.New(appErrors.CodeValidation, "invalid mysql connection settings", err)
+		_ = tun.Close()
+		return nil, nil, appErrors.New(appErrors.CodeValidation, "invalid mysql connection settings", err)
 	}
 	db := sql.OpenDB(connector)
-	defer db.Close()
 	db.SetMaxOpenConns(1)
+	return db, tun, nil
+}
+
+func (s *connectionService) TestSshMysql(ctx context.Context, input domain.SshMysqlConnection) (*domain.ConnectionTestResult, error) {
+	if err := validateMysqlEndpoint(&input.Mysql); err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, connectionTestTimeout)
+	defer cancel()
+
+	log := s.logger.With(
+		logger.Field{Key: "sshHost", Value: input.Ssh.Host},
+		logger.Field{Key: "mysqlHost", Value: input.Mysql.Host},
+	)
+
+	db, tun, err := s.openMysqlSession(ctx, input)
+	if err != nil {
+		log.Error("ssh tunnel failed", err)
+		return nil, err
+	}
+	defer tun.Close()
+	defer db.Close()
 
 	startedAt := time.Now()
 	var serverVersion string
@@ -116,55 +129,68 @@ func validateMysqlEndpoint(endpoint *domain.MysqlEndpoint) error {
 	return nil
 }
 
-func (s *connectionService) SaveActiveSshMysql(ctx context.Context, input domain.SshMysqlConnection) error {
+func (s *connectionService) SaveActiveSshMysql(ctx context.Context, target string, input domain.SshMysqlConnection) error {
 	if err := validateMysqlEndpoint(&input.Mysql); err != nil {
 		return err
 	}
-	s.activeConnection = &input
+	normalizedTarget := strings.ToLower(strings.TrimSpace(target))
+	if normalizedTarget == "target" || strings.ToLower(input.Target) == "target" {
+		input.Target = "target"
+		s.activeTargetConnection = &input
+	} else {
+		input.Target = "source"
+		s.activeConnection = &input
+	}
 	return nil
 }
+
+func (s *connectionService) GetActiveConnection(ctx context.Context, target string) (*domain.ActiveConnectionInfo, error) {
+	var conn *domain.SshMysqlConnection
+	normalizedTarget := strings.ToLower(strings.TrimSpace(target))
+	if normalizedTarget == "target" {
+		conn = s.activeTargetConnection
+	} else {
+		conn = s.activeConnection
+		normalizedTarget = "source"
+	}
+
+	if conn == nil {
+		return nil, nil
+	}
+
+	sanitizedConn := *conn
+	sanitizedConn.Ssh.Password = ""
+	sanitizedConn.Mysql.Password = ""
+
+	return &domain.ActiveConnectionInfo{
+		Target:      normalizedTarget,
+		Status:      "active",
+		DbName:      conn.Mysql.Schema,
+		ChannelType: conn.ChannelType,
+		Username:    conn.Mysql.User,
+		Environment: conn.Environment,
+		Connection:  &sanitizedConn,
+	}, nil
+}
+
 
 func (s *connectionService) GetTelemetry(ctx context.Context) (*domain.TelemetryResponse, error) {
 	if s.activeConnection == nil {
 		return nil, appErrors.New(appErrors.CodeValidation, "no active connection configured", nil)
 	}
-	
+
 	input := *s.activeConnection
-	
+
 	ctx, cancel := context.WithTimeout(ctx, connectionTestTimeout)
 	defer cancel()
 
-	tun, err := tunnel.Open(ctx, tunnel.Config{
-		Host:                  input.Ssh.Host,
-		Port:                  input.Ssh.Port,
-		User:                  input.Ssh.User,
-		Password:              input.Ssh.Password,
-		PrivateKeyPath:        input.Ssh.PrivateKeyPath,
-		KnownHostsPath:        input.Ssh.KnownHostsPath,
-		InsecureIgnoreHostKey: input.Ssh.InsecureIgnoreHostKey,
-	})
+	db, tun, err := s.openMysqlSession(ctx, input)
 	if err != nil {
 		s.logger.Error("ssh tunnel failed in telemetry", err)
 		return nil, err
 	}
 	defer tun.Close()
-
-	mysqlConfig := mysql.NewConfig()
-	mysqlConfig.User = input.Mysql.User
-	mysqlConfig.Passwd = input.Mysql.Password
-	mysqlConfig.DBName = input.Mysql.Schema
-	mysqlConfig.Net = "tcp"
-	mysqlConfig.Addr = net.JoinHostPort(input.Mysql.Host, strconv.Itoa(input.Mysql.Port))
-	mysqlConfig.Timeout = mysqlDialTimeout
-	mysqlConfig.DialFunc = tun.DialContext
-
-	connector, err := mysql.NewConnector(mysqlConfig)
-	if err != nil {
-		return nil, err
-	}
-	db := sql.OpenDB(connector)
 	defer db.Close()
-	db.SetMaxOpenConns(1)
 
 	var threadsValue string
 	var varName string
@@ -186,5 +212,180 @@ func (s *connectionService) GetTelemetry(ctx context.Context) (*domain.Telemetry
 		MemoryUsage:       30,
 		DiskUsageMB:       diskMB,
 		ActiveConnections: threadsConnected,
+	}, nil
+}
+
+func (s *connectionService) GetSchema(ctx context.Context, target string, requestedSchema string) (*domain.DatabaseSchemaResponse, error) {
+	var conn *domain.SshMysqlConnection
+	if target == "target" {
+		conn = s.activeTargetConnection
+	} else {
+		conn = s.activeConnection
+	}
+	if conn == nil {
+		return nil, appErrors.New(appErrors.CodeValidation, "no active connection configured for "+target, nil)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, connectionTestTimeout)
+	defer cancel()
+
+	db, tun, err := s.openMysqlSession(ctx, *conn)
+	if err != nil {
+		s.logger.Error("ssh tunnel failed in schema retrieval", err)
+		return nil, err
+	}
+	defer tun.Close()
+	defer db.Close()
+
+	// Query available non-system schemas
+	availableSchemas := make([]string, 0)
+	schemaRows, err := db.QueryContext(ctx, "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') ORDER BY SCHEMA_NAME")
+	if err == nil {
+		defer schemaRows.Close()
+		for schemaRows.Next() {
+			var sn string
+			if err := schemaRows.Scan(&sn); err == nil {
+				availableSchemas = append(availableSchemas, sn)
+			}
+		}
+	}
+
+	schemaName := strings.TrimSpace(requestedSchema)
+	if schemaName == "" {
+		schemaName = strings.TrimSpace(conn.Mysql.Schema)
+	}
+	if schemaName == "" {
+		var currentDb sql.NullString
+		_ = db.QueryRowContext(ctx, "SELECT DATABASE()").Scan(&currentDb)
+		if currentDb.Valid && strings.TrimSpace(currentDb.String) != "" {
+			schemaName = strings.TrimSpace(currentDb.String)
+		}
+	}
+	if schemaName == "" && len(availableSchemas) > 0 {
+		schemaName = availableSchemas[0]
+	}
+	if schemaName == "" {
+		return nil, appErrors.New(appErrors.CodeValidation, "no database schema specified or found in MySQL", nil)
+	}
+
+	// 1. Query Relations (Foreign Keys)
+	relationsQuery := `
+		SELECT 
+			k.CONSTRAINT_NAME,
+			k.TABLE_NAME,
+			k.COLUMN_NAME,
+			k.REFERENCED_TABLE_NAME,
+			k.REFERENCED_COLUMN_NAME
+		FROM information_schema.KEY_COLUMN_USAGE k
+		WHERE k.TABLE_SCHEMA = ?
+		  AND k.REFERENCED_TABLE_NAME IS NOT NULL
+		ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION`
+
+	relRows, err := db.QueryContext(ctx, relationsQuery, schemaName)
+	if err != nil {
+		s.logger.Error("failed to query relations schema", err)
+		return nil, appErrors.New(appErrors.CodeConnection, "failed to query relations schema", err)
+	}
+	defer relRows.Close()
+
+	relations := make([]domain.TableRelation, 0)
+	fkLookup := make(map[string]bool)
+	for relRows.Next() {
+		var rel domain.TableRelation
+		if err := relRows.Scan(&rel.ConstraintName, &rel.SourceTable, &rel.SourceColumn, &rel.TargetTable, &rel.TargetColumn); err != nil {
+			return nil, err
+		}
+		relations = append(relations, rel)
+		fkLookup[rel.SourceTable+"."+rel.SourceColumn] = true
+	}
+	if err := relRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 2. Query Tables
+	tablesQuery := `
+		SELECT TABLE_NAME 
+		FROM information_schema.TABLES 
+		WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
+		ORDER BY TABLE_NAME`
+
+	tableRows, err := db.QueryContext(ctx, tablesQuery, schemaName)
+	if err != nil {
+		s.logger.Error("failed to query tables schema", err)
+		return nil, appErrors.New(appErrors.CodeConnection, "failed to query tables schema", err)
+	}
+	defer tableRows.Close()
+
+	tables := make([]domain.TableSchema, 0)
+	tableMap := make(map[string]*domain.TableSchema)
+	for tableRows.Next() {
+		var tableName string
+		if err := tableRows.Scan(&tableName); err != nil {
+			return nil, err
+		}
+		tSchema := domain.TableSchema{
+			Name:    tableName,
+			Columns: make([]domain.ColumnSchema, 0),
+		}
+		tables = append(tables, tSchema)
+	}
+	if err := tableRows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range tables {
+		tableMap[tables[i].Name] = &tables[i]
+	}
+
+	// 3. Query Columns
+	columnsQuery := `
+		SELECT 
+			TABLE_NAME,
+			COLUMN_NAME,
+			COLUMN_TYPE,
+			IS_NULLABLE,
+			COLUMN_KEY
+		FROM information_schema.COLUMNS 
+		WHERE TABLE_SCHEMA = ?
+		ORDER BY TABLE_NAME, ORDINAL_POSITION`
+
+	colRows, err := db.QueryContext(ctx, columnsQuery, schemaName)
+	if err != nil {
+		s.logger.Error("failed to query columns schema", err)
+		return nil, appErrors.New(appErrors.CodeConnection, "failed to query columns schema", err)
+	}
+	defer colRows.Close()
+
+	for colRows.Next() {
+		var tableName, colName, colType, isNullable, colKey string
+		if err := colRows.Scan(&tableName, &colName, &colType, &isNullable, &colKey); err != nil {
+			return nil, err
+		}
+		if t, exists := tableMap[tableName]; exists {
+			col := domain.ColumnSchema{
+				Name:         colName,
+				Type:         colType,
+				IsNullable:   strings.EqualFold(isNullable, "YES"),
+				IsPrimaryKey: strings.EqualFold(colKey, "PRI"),
+				IsForeignKey: fkLookup[tableName+"."+colName],
+			}
+			t.Columns = append(t.Columns, col)
+		}
+	}
+	if err := colRows.Err(); err != nil {
+		return nil, err
+	}
+
+	dbDisplayName := conn.Mysql.Schema
+	if dbDisplayName == "" {
+		dbDisplayName = schemaName
+	}
+
+	return &domain.DatabaseSchemaResponse{
+		DatabaseName:     dbDisplayName,
+		Schema:           schemaName,
+		AvailableSchemas: availableSchemas,
+		Tables:           tables,
+		Relations:        relations,
 	}, nil
 }

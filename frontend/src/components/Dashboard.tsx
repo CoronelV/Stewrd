@@ -1,11 +1,17 @@
-import React from 'react';
-import { Card, CardHeader, CardContent, Separator, Chip, Spinner } from '@heroui/react';
-import { ArrowRight, Activity, Clock } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Card, CardHeader, CardContent, Separator, Chip, Spinner, Button } from '@heroui/react';
+import { ArrowRight, Activity, Clock, Layers } from 'lucide-react';
 import { useAppStore } from '../store/useAppStore';
-import { getTelemetry } from '../api/connectionsApi';
-import { useEffect } from 'react';
-import type { ConnectionStatus, DatabaseInfo, RunningJobInfo, ConnectionStats } from '../store/useAppStore';
+import { getTelemetry, getActiveConnection } from '../api/connectionsApi';
+import type {
+  ConnectionStatus,
+  DatabaseInfo,
+  RunningJobInfo,
+  ConnectionStats,
+  ConnectionTarget,
+} from '../store/useAppStore';
 import { dashboardTheme } from '../constants/ui/themeConstants';
+import { SchemaDiagramModal } from './schema-diagram/SchemaDiagramModal';
 
 const StatusIndicator: React.FC<{ status: ConnectionStatus }> = ({ status }) => {
   const bgClass = dashboardTheme.connectionStatusClasses[status] || 'bg-gray-600';
@@ -46,7 +52,7 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
     <Card className="w-full relative">
       <CardHeader className="flex flex-row items-start justify-between w-full">
         <div className="flex flex-col items-start gap-1">
-          <p className="text-md font-bold">{info.type} Database</p>
+          <p className="text-md font-bold">{title}</p>
           <p className="text-small text-foreground/70">{info.dbName}</p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -207,8 +213,58 @@ const RunningJobCard: React.FC<{ jobInfo: RunningJobInfo | null }> = ({ jobInfo 
 };
 
 const Dashboard: React.FC = () => {
-  const { sourceDb, targetDb, runningJob, updateSourceTelemetry, config } = useAppStore();
+  const {
+    sourceDb,
+    targetDb,
+    runningJob,
+    updateSourceTelemetry,
+    setSourceDb,
+    setTargetDb,
+    config,
+  } = useAppStore();
+  const [selectedSchemaTarget, setSelectedSchemaTarget] = useState<ConnectionTarget | null>(null);
+  const [selectedDbInfo, setSelectedDbInfo] = useState<DatabaseInfo | null>(null);
 
+  const handleOpenSchema = (target: ConnectionTarget, info: DatabaseInfo | null) => {
+    setSelectedSchemaTarget(target);
+    setSelectedDbInfo(info);
+  };
+
+  // Restore active connections from backend on initial mount
+  useEffect(() => {
+    let mounted = true;
+
+    const restoreActiveConnections = async () => {
+      try {
+        const [sourceRes, targetRes] = await Promise.allSettled([
+          getActiveConnection('source'),
+          getActiveConnection('target'),
+        ]);
+
+        if (!mounted) return;
+
+        if (sourceRes.status === 'fulfilled' && sourceRes.value) {
+          const { connection, ...rest } = sourceRes.value;
+          setSourceDb(rest);
+        }
+
+        if (targetRes.status === 'fulfilled' && targetRes.value) {
+          const { connection, ...rest } = targetRes.value;
+          setTargetDb(rest);
+        }
+      } catch (err) {
+        console.error('Failed to restore active connections', err);
+      }
+    };
+
+    void restoreActiveConnections();
+
+    return () => {
+      mounted = false;
+    };
+  }, [setSourceDb, setTargetDb]);
+
+  // Telemetry polling
   useEffect(() => {
     let mounted = true;
     const fetchTel = async () => {
@@ -225,17 +281,17 @@ const Dashboard: React.FC = () => {
           });
         }
       } catch (err) {
-        console.error("Telemetry failed", err);
+        console.error('Telemetry failed', err);
       }
     };
-    
-    fetchTel();
+
+    void fetchTel();
     const intv = setInterval(fetchTel, config.telemetryInterval * 1000);
     return () => {
       mounted = false;
       clearInterval(intv);
     };
-  }, [config.telemetryInterval]);
+  }, [config.telemetryInterval, sourceDb?.status, updateSourceTelemetry]);
 
   return (
     <div className="flex flex-col gap-6">
@@ -243,13 +299,38 @@ const Dashboard: React.FC = () => {
 
       {/* First Section: Status Summary */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <DatabaseStatusCard info={sourceDb} title="Source Database" />
-        <DatabaseStatusCard info={targetDb} title="Target Database" />
+        {([
+          { info: sourceDb, title: 'Source Database', target: 'source' as const },
+          { info: targetDb, title: 'Target Database', target: 'target' as const },
+        ]).map((item) => (
+          <div key={item.target} className="flex flex-col gap-3">
+            <DatabaseStatusCard info={item.info} title={item.title} />
+            <Button
+              variant="secondary"
+              className="w-full flex items-center justify-center gap-2 font-semibold shadow-xs"
+              onPress={() => handleOpenSchema(item.target, item.info)}
+            >
+              <Layers size={16} />
+              Show Schema
+            </Button>
+          </div>
+        ))}
       </div>
 
       {/* Second Section: Running Job */}
       <RunningJobCard jobInfo={runningJob} />
 
+      {/* Schema Diagram Modal */}
+      {selectedSchemaTarget && selectedDbInfo && (
+        <SchemaDiagramModal
+          isOpen={!!selectedSchemaTarget}
+          onClose={() => setSelectedSchemaTarget(null)}
+          target={selectedSchemaTarget}
+          dbName={selectedDbInfo.dbName}
+          environment={selectedDbInfo.environment}
+          channelType={selectedDbInfo.channelType}
+        />
+      )}
     </div>
   );
 };

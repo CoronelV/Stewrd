@@ -24,7 +24,9 @@ const (
 	routeTaskById       = apiPrefix + "/tasks/{" + pathParamTaskId + "}"
 	routeConnectionTest = apiPrefix + "/connections/test"
 	routeConnectionSave = apiPrefix + "/connections/save"
+	routeConnectionActive = apiPrefix + "/connections/active"
 	routeConnectionTelemetry = apiPrefix + "/connections/telemetry"
+	routeConnectionSchema = apiPrefix + "/connections/schema"
 )
 
 const (
@@ -45,9 +47,11 @@ const (
 	patternUpdateTask   = http.MethodPut + " " + routeTaskById     // 200 TableTask | 404 | 409
 	patternDeleteTask   = http.MethodDelete + " " + routeTaskById  // 204 | 404 | 409
 
-	patternTestConnection = http.MethodPost + " " + routeConnectionTest
-	patternSaveConnection = http.MethodPost + " " + routeConnectionSave
-	patternGetTelemetry = http.MethodGet + " " + routeConnectionTelemetry
+	patternTestConnection      = http.MethodPost + " " + routeConnectionTest
+	patternSaveConnection      = http.MethodPost + " " + routeConnectionSave
+	patternGetActiveConnection = http.MethodGet + " " + routeConnectionActive
+	patternGetTelemetry        = http.MethodGet + " " + routeConnectionTelemetry
+	patternGetSchema           = http.MethodGet + " " + routeConnectionSchema
 )
 
 type httpHandlers struct {
@@ -68,7 +72,9 @@ func (h *httpHandlers) register(mux *http.ServeMux) {
 	mux.HandleFunc(patternHealth, h.health)
 	mux.HandleFunc(patternTestConnection, h.testConnection)
 	mux.HandleFunc(patternSaveConnection, h.saveConnection)
+	mux.HandleFunc(patternGetActiveConnection, h.getActiveConnection)
 	mux.HandleFunc(patternGetTelemetry, h.getTelemetry)
+	mux.HandleFunc(patternGetSchema, h.getSchema)
 }
 
 func (h *httpHandlers) health(w http.ResponseWriter, r *http.Request) {
@@ -147,12 +153,33 @@ func (h *httpHandlers) saveConnection(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if err := h.connections.SaveActiveSshMysql(r.Context(), input); err != nil {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = input.Target
+	}
+	if target == "" {
+		target = "source"
+	}
+	if err := h.connections.SaveActiveSshMysql(r.Context(), target, input); err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJson(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+func (h *httpHandlers) getActiveConnection(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = "source"
+	}
+	connInfo, err := h.connections.GetActiveConnection(r.Context(), target)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, connInfo)
+}
+
 
 func (h *httpHandlers) getTelemetry(w http.ResponseWriter, r *http.Request) {
 	telemetry, err := h.connections.GetTelemetry(r.Context())
@@ -162,3 +189,18 @@ func (h *httpHandlers) getTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJson(w, http.StatusOK, telemetry)
 }
+
+func (h *httpHandlers) getSchema(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = "source"
+	}
+	requestedSchema := r.URL.Query().Get("schema")
+	schema, err := h.connections.GetSchema(r.Context(), target, requestedSchema)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, schema)
+}
+

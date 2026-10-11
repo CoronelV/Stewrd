@@ -16,6 +16,7 @@
     "@heroui/react": "^3.2.6",
     "@heroui/styles": "^3.2.6",
     "@heroui/theme": "^2.4.26",
+    "@xyflow/react": "^12.12.0",
     "lucide-react": "^1.55.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

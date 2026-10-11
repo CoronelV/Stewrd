@@ -1,4 +1,11 @@
+import type { ConnectionStatus, Environment, ConnectionTarget } from '../store/useAppStore';
+
+export type { ConnectionStatus, Environment, ConnectionTarget };
+
 export interface SshMysqlConnectionInput {
+  target?: ConnectionTarget;
+  environment?: Environment;
+  channelType?: string;
   ssh: {
     host: string;
     port: number;
@@ -16,8 +23,18 @@ export interface SshMysqlConnectionInput {
   };
 }
 
+export interface ActiveConnectionInfo {
+  target: ConnectionTarget;
+  status: ConnectionStatus;
+  dbName: string;
+  channelType: string;
+  username: string;
+  environment: Environment;
+  connection?: SshMysqlConnectionInput;
+}
+
 export interface TelemetryRequest {
-  target?: 'source' | 'target';
+  target?: ConnectionTarget;
 }
 
 export interface TelemetryResponse {
@@ -25,4 +42,33 @@ export interface TelemetryResponse {
   memoryUsage: number;
   diskUsage: number;
   activeConnections: number;
+}
+
+export interface ColumnSchema {
+  name: string;
+  type: string;
+  isNullable: boolean;
+  isPrimaryKey: boolean;
+  isForeignKey: boolean;
+}
+
+export interface TableRelation {
+  constraintName: string;
+  sourceTable: string;
+  sourceColumn: string;
+  targetTable: string;
+  targetColumn: string;
+}
+
+export interface TableSchema {
+  name: string;
+  columns: ColumnSchema[];
+}
+
+export interface DatabaseSchemaResponse {
+  databaseName: string;
+  schema: string;
+  availableSchemas?: string[];
+  tables: TableSchema[];
+  relations: TableRelation[];
 }

@@ -3,6 +3,8 @@ import { mockDashboardState } from '../constants/system/systemConstants';
 
 export type ConnectionStatus = 'active' | 'inactive' | 'connecting' | 'pending';
 export type Environment = 'DEV' | 'STG' | 'UAT' | 'PRD' | '-';
+export type ConnectionTarget = 'source' | 'target';
+
 export interface AppConfig {
   telemetryInterval: number;
 }
@@ -22,7 +24,7 @@ interface DbTelemetry {
 }
 
 export interface DatabaseInfo {
-  type: 'Source' | 'Target';
+  target: ConnectionTarget;
   status: ConnectionStatus;
   dbName: string;
   channelType: string;

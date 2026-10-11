@@ -4,7 +4,7 @@ export const mockDashboardState: Omit<AppState, 'setSourceDb' | 'setTargetDb' | 
   notifications: [],
   config: { telemetryInterval: 30 },
   sourceDb: {
-    type: 'Source',
+    target: 'source',
     status: 'pending',
     dbName: '-',
     channelType: '-',
@@ -12,7 +12,7 @@ export const mockDashboardState: Omit<AppState, 'setSourceDb' | 'setTargetDb' | 
     environment: '-',
   },
   targetDb: {
-    type: 'Target',
+    target: 'target',
     status: 'pending',
     dbName: '-',
     channelType: '-',
