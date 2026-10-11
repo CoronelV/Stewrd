@@ -55,6 +55,7 @@ const (
 	patternTestConnection      = http.MethodPost + " " + routeConnectionTest
 	patternSaveConnection      = http.MethodPost + " " + routeConnectionSave
 	patternGetActiveConnection = http.MethodGet + " " + routeConnectionActive
+	patternDeleteActiveConnection = http.MethodDelete + " " + routeConnectionActive
 	patternGetTelemetry        = http.MethodGet + " " + routeConnectionTelemetry
 	patternGetSchema           = http.MethodGet + " " + routeConnectionSchema
 
@@ -83,6 +84,8 @@ func (h *httpHandlers) register(mux *http.ServeMux) {
 	mux.HandleFunc(patternTestConnection, h.testConnection)
 	mux.HandleFunc(patternSaveConnection, h.saveConnection)
 	mux.HandleFunc(patternGetActiveConnection, h.getActiveConnection)
+	mux.HandleFunc(patternDeleteActiveConnection, h.removeActiveConnection)
+	mux.HandleFunc(http.MethodPost+" "+apiPrefix+"/connections/remove", h.removeActiveConnection)
 	mux.HandleFunc(patternGetTelemetry, h.getTelemetry)
 	mux.HandleFunc(patternGetSchema, h.getSchema)
 	mux.HandleFunc(patternValidateReplication, h.validateReplication)
@@ -194,9 +197,25 @@ func (h *httpHandlers) getActiveConnection(w http.ResponseWriter, r *http.Reques
 	writeJson(w, http.StatusOK, connInfo)
 }
 
+func (h *httpHandlers) removeActiveConnection(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = "source"
+	}
+	if err := h.connections.RemoveConnection(r.Context(), target); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
 
 func (h *httpHandlers) getTelemetry(w http.ResponseWriter, r *http.Request) {
-	telemetry, err := h.connections.GetTelemetry(r.Context())
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = "source"
+	}
+	telemetry, err := h.connections.GetTelemetry(r.Context(), target)
 	if err != nil {
 		writeError(w, err)
 		return

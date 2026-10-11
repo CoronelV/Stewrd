@@ -10,10 +10,19 @@ export interface AppConfig {
 }
 
 export type NotificationStatus = 'loading' | 'success' | 'error' | 'warning';
+export interface NotificationAction {
+  label: string;
+  variant?: 'primary' | 'danger' | 'warning' | 'secondary' | 'default';
+  onClick: () => void;
+}
+
 export interface AppNotification {
   id: string;
+  title?: string;
   message: string;
   status: NotificationStatus;
+  persistent?: boolean;
+  actions?: NotificationAction[];
 }
 
 interface DbTelemetry {
@@ -28,6 +37,7 @@ export interface DatabaseInfo {
   status: ConnectionStatus;
   dbName: string;
   channelType: string;
+  engine: string;
   username: string;
   environment: Environment;
   telemetry?: DbTelemetry;
@@ -66,8 +76,8 @@ export interface AppState {
   theme: 'light' | 'dark';
   notifications: AppNotification[];
   config: AppConfig;
-  setSourceDb: (info: DatabaseInfo) => void;
-  setTargetDb: (info: DatabaseInfo) => void;
+  setSourceDb: (info: DatabaseInfo | null) => void;
+  setTargetDb: (info: DatabaseInfo | null) => void;
   setRunningJob: (job: RunningJobInfo | null) => void;
   updateRunningJob: (updates: Partial<RunningJobInfo>) => void;
   toggleTheme: () => void;
@@ -75,6 +85,7 @@ export interface AppState {
   updateNotification: (id: string, updates: Partial<AppNotification>) => void;
   removeNotification: (id: string) => void;
   updateSourceTelemetry: (tel: DbTelemetry) => void;
+  updateTargetTelemetry: (tel: DbTelemetry) => void;
   updateConfig: (updates: Partial<AppConfig>) => void;
 }
 
@@ -91,8 +102,10 @@ export const useAppStore = create<AppState>((set) => ({
   })),
   toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
   addNotification: (n) => {
-    set((s) => ({ notifications: [n, ...s.notifications] }));
-    if (n.status !== 'loading') {
+    set((s) => ({
+      notifications: [n, ...s.notifications.filter(item => item.id !== n.id)]
+    }));
+    if (n.status !== 'loading' && !n.persistent && (!n.actions || n.actions.length === 0)) {
       setTimeout(() => {
         useAppStore.getState().removeNotification(n.id);
       }, 5000);
@@ -102,13 +115,19 @@ export const useAppStore = create<AppState>((set) => ({
     set((s) => ({
       notifications: s.notifications.map(n => n.id === id ? { ...n, ...updates } : n)
     }));
-    if (updates.status === 'success' || updates.status === 'error' || updates.status === 'warning') {
+    const updated = useAppStore.getState().notifications.find(n => n.id === id);
+    if (
+      (updates.status === 'success' || updates.status === 'error' || updates.status === 'warning') &&
+      !updated?.persistent &&
+      (!updated?.actions || updated.actions.length === 0)
+    ) {
       setTimeout(() => {
         useAppStore.getState().removeNotification(id);
       }, 5000);
     }
   },
   updateSourceTelemetry: (tel: DbTelemetry) => set(s => s.sourceDb ? { sourceDb: { ...s.sourceDb, telemetry: tel } } : s),
+  updateTargetTelemetry: (tel: DbTelemetry) => set(s => s.targetDb ? { targetDb: { ...s.targetDb, telemetry: tel } } : s),
   removeNotification: (id) => set((s) => ({
     notifications: s.notifications.filter(n => n.id !== id)
   })),

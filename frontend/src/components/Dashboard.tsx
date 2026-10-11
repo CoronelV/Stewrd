@@ -3,8 +3,9 @@ import { Card, CardHeader, CardContent, Separator, Chip, Spinner, Button } from 
 import { ArrowRight, Activity, Clock, Layers, PlayCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
-import { getTelemetry, getActiveConnection } from '../api/connectionsApi';
+import { getTelemetry, getActiveConnection, removeActiveConnection } from '../api/connectionsApi';
 import { getActiveJob } from '../api/jobsApi';
+import { mockDashboardState } from '../constants/system/systemConstants';
 import type {
   ConnectionStatus,
   DatabaseInfo,
@@ -15,6 +16,8 @@ import type {
 import { dashboardTheme } from '../constants/ui/themeConstants';
 import { SchemaDiagramModal } from './schema-diagram/SchemaDiagramModal';
 import { EnvironmentBadge } from './common/EnvironmentBadge';
+import { DatabaseEngineIcon } from './common/DatabaseEngineIcon';
+import { getEngineOption } from '../constants/database/engineConstants';
 
 const StatusIndicator: React.FC<{ status: ConnectionStatus }> = ({ status }) => {
   const bgClass = dashboardTheme.connectionStatusClasses[status] || 'bg-gray-600';
@@ -49,14 +52,30 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
     );
   }
 
+  const hasEngine = Boolean(info.engine && info.engine !== '-' && info.engine.trim() !== '');
+  const engineOption = getEngineOption(info.engine);
+
   return (
     <Card className="w-full relative">
-      <CardHeader className="flex flex-row items-start justify-between w-full">
-        <div className="flex flex-col items-start gap-1">
-          <p className="text-md font-bold">{title}</p>
-          <p className="text-small text-foreground/70">{info.dbName}</p>
+      <CardHeader className="flex flex-row items-center justify-between w-full py-4 px-5 min-h-[88px]">
+        <div className="flex items-center gap-3.5 min-w-0">
+          <div className="w-12 h-12 rounded-2xl bg-default-100/90 border border-separator shadow-xs shrink-0 flex items-center justify-center">
+            <DatabaseEngineIcon engine={info.engine} size={30} />
+          </div>
+          <div className="flex flex-col items-start gap-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="text-md font-bold truncate">{title}</p>
+              {hasEngine && (
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-default-100 border border-separator text-xs font-semibold text-foreground shrink-0">
+                  <DatabaseEngineIcon engine={info.engine} size={15} />
+                  <span>{engineOption.name}</span>
+                </div>
+              )}
+            </div>
+            <p className="text-small text-foreground/70 truncate">{info.dbName}</p>
+          </div>
         </div>
-        <div className="flex flex-col items-end gap-2">
+        <div className="flex flex-col items-end gap-2 shrink-0">
           <StatusIndicator status={info.status} />
           <EnvironmentBadge environment={info.environment} size="md" />
         </div>
@@ -67,32 +86,32 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1">
               <span className="text-xs text-foreground/70 uppercase font-semibold">Channel Type</span>
-              <span className="text-sm font-medium">{info.channelType}</span>
+              <span className="text-sm font-medium truncate">{info.channelType}</span>
             </div>
             <div className="flex flex-col gap-1">
               <span className="text-xs text-foreground/70 uppercase font-semibold">Username</span>
-              <span className="text-sm font-medium">{info.username}</span>
+              <span className="text-sm font-medium truncate">{info.username}</span>
             </div>
           </div>
 
-          {(info.status === 'active' || info.status === 'pending') && (
+          {(info.status === 'active' || info.status === 'inactive' || info.status === 'pending') && (
             <>
               <Separator />
               <div className="grid grid-cols-4 gap-2">
                 <div className="flex flex-col items-center justify-center px-2 py-1 bg-default-100 rounded-lg min-h-[60px]">
-                  {info.status === 'pending' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.cpuUsage}%</span> : <Spinner size="sm" className="mb-1" />)}
+                  {info.status !== 'active' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.cpuUsage}%</span> : <Spinner size="sm" className="mb-1" />)}
                   <span className="text-xs text-foreground/50">CPU</span>
                 </div>
                 <div className="flex flex-col items-center justify-center px-2 py-1 bg-default-100 rounded-lg min-h-[60px]">
-                  {info.status === 'pending' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.memoryUsage}%</span> : <Spinner size="sm" className="mb-1" />)}
+                  {info.status !== 'active' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.memoryUsage}%</span> : <Spinner size="sm" className="mb-1" />)}
                   <span className="text-xs text-foreground/50">Mem</span>
                 </div>
                 <div className="flex flex-col items-center justify-center px-2 py-1 bg-default-100 rounded-lg min-h-[60px]">
-                  {info.status === 'pending' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.diskUsage} MB</span> : <Spinner size="sm" className="mb-1" />)}
+                  {info.status !== 'active' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.diskUsage} MB</span> : <Spinner size="sm" className="mb-1" />)}
                   <span className="text-xs text-foreground/50">Disk</span>
                 </div>
                 <div className="flex flex-col items-center justify-center px-2 py-1 bg-default-100 rounded-lg min-h-[60px]">
-                  {info.status === 'pending' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.activeConnections}</span> : <Spinner size="sm" className="mb-1" />)}
+                  {info.status !== 'active' ? <span className="text-md font-bold">-</span> : (info.telemetry ? <span className="text-md font-bold">{info.telemetry.activeConnections}</span> : <Spinner size="sm" className="mb-1" />)}
                   <span className="text-xs text-foreground/50">Conns</span>
                 </div>
               </div>
@@ -126,12 +145,14 @@ const RunningJobCard: React.FC<{ jobInfo: RunningJobInfo | null }> = ({ jobInfo 
   if (!jobInfo) {
     return (
       <Card className="w-full">
-        <CardHeader className="flex justify-between items-center">
+        <CardHeader className="flex flex-row items-center justify-between w-full py-4 px-5">
           <div className="flex items-center gap-2">
             <Activity size={20} className="text-primary" />
             <p className="text-md font-bold">Replication Job</p>
           </div>
-          <Chip size="sm" variant="soft">No active runs</Chip>
+          <div className="ml-auto">
+            <Chip size="sm" variant="soft">No active runs</Chip>
+          </div>
         </CardHeader>
         <Separator />
         <CardContent className="py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
@@ -163,12 +184,12 @@ const RunningJobCard: React.FC<{ jobInfo: RunningJobInfo | null }> = ({ jobInfo 
 
   return (
     <Card className="w-full">
-      <CardHeader className="flex justify-between items-center">
+      <CardHeader className="flex flex-row items-center justify-between w-full py-4 px-5">
         <div className="flex items-center gap-2">
           <Activity size={20} className="text-primary" />
           <p className="text-md font-bold">{jobInfo.name || 'Replicate in local'}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-2">
           <Chip size="sm" variant="soft" className="capitalize">
             {jobInfo.jobStats.phase}
           </Chip>
@@ -252,22 +273,123 @@ const RunningJobCard: React.FC<{ jobInfo: RunningJobInfo | null }> = ({ jobInfo 
 };
 
 const Dashboard: React.FC = () => {
+  const navigate = useNavigate();
   const {
     sourceDb,
     targetDb,
     runningJob,
     updateSourceTelemetry,
+    updateTargetTelemetry,
     setSourceDb,
     setTargetDb,
+    addNotification,
     config,
   } = useAppStore();
   const [selectedSchemaTarget, setSelectedSchemaTarget] = useState<ConnectionTarget | null>(null);
   const [selectedDbInfo, setSelectedDbInfo] = useState<DatabaseInfo | null>(null);
 
   const handleOpenSchema = (target: ConnectionTarget, info: DatabaseInfo | null) => {
-    if (info?.status !== 'active') return;
+    if (!info || info.dbName === '-' || !info.dbName) return;
     setSelectedSchemaTarget(target);
     setSelectedDbInfo(info);
+  };
+
+  const handleReconnect = async (target: ConnectionTarget, notifId: string) => {
+    useAppStore.getState().removeNotification(notifId);
+    try {
+      const active = await getActiveConnection(target);
+      if (active && active.connection) {
+        const { connection, ...rest } = active;
+        if (target === 'source') {
+          setSourceDb(rest);
+        } else {
+          setTargetDb(rest);
+        }
+        const tel = await getTelemetry({ target });
+        if (target === 'source') {
+          updateSourceTelemetry({
+            cpuUsage: tel.cpuUsage,
+            memoryUsage: tel.memoryUsage,
+            diskUsage: Math.round(tel.diskUsage),
+            activeConnections: tel.activeConnections,
+          });
+        } else {
+          updateTargetTelemetry({
+            cpuUsage: tel.cpuUsage,
+            memoryUsage: tel.memoryUsage,
+            diskUsage: Math.round(tel.diskUsage),
+            activeConnections: tel.activeConnections,
+          });
+        }
+        addNotification({
+          id: Date.now().toString(),
+          message: `Connection re-established for ${target === 'source' ? 'Source' : 'Target'} database`,
+          status: 'success',
+        });
+        return;
+      }
+    } catch {
+      // Reconnect probe failed or no active connection on backend
+    }
+    navigate(target === 'source' ? '/setup-source' : '/setup-target');
+  };
+
+  const handleRemoveConnection = async (target: ConnectionTarget, notifId: string) => {
+    useAppStore.getState().removeNotification(notifId);
+    try {
+      await removeActiveConnection(target);
+    } catch (e) {
+      console.error('Failed to remove active connection on backend', e);
+    }
+    if (target === 'source') {
+      setSourceDb(mockDashboardState.sourceDb);
+    } else {
+      setTargetDb(mockDashboardState.targetDb);
+    }
+    addNotification({
+      id: Date.now().toString(),
+      message: `${target === 'source' ? 'Source' : 'Target'} connection removed`,
+      status: 'warning',
+    });
+  };
+
+  const handleTelemetryError = (target: ConnectionTarget, err: unknown) => {
+    const errorObj = err as { code?: number; status?: number; message?: string; detailed?: string; summary?: string } | undefined;
+    const code = Number(errorObj?.code ?? errorObj?.status);
+    const text = `${errorObj?.message || ''} ${errorObj?.detailed || ''} ${errorObj?.summary || ''}`.toLowerCase();
+    const isConnectionLost = (code === 400 && text.includes('no active connection')) || text.includes('no active connection configured');
+
+    if (isConnectionLost) {
+      const state = useAppStore.getState();
+      if (target === 'source' && state.sourceDb && state.sourceDb.status === 'active') {
+        setSourceDb({ ...state.sourceDb, status: 'inactive' });
+      } else if (target === 'target' && state.targetDb && state.targetDb.status === 'active') {
+        setTargetDb({ ...state.targetDb, status: 'inactive' });
+      }
+
+      const notifId = `connection-lost-${target}`;
+      const targetLabel = target === 'source' ? 'Source Database' : 'Target Database';
+
+      addNotification({
+        id: notifId,
+        title: 'Connection lost',
+        message: `${targetLabel}: no active connection configured.`,
+        status: 'error',
+        persistent: true,
+        actions: [
+          {
+            label: 'Reconnect',
+            variant: 'primary',
+            onClick: () => void handleReconnect(target, notifId),
+          },
+          {
+            label: 'Remove connection',
+            variant: 'danger',
+            onClick: () => void handleRemoveConnection(target, notifId),
+          },
+        ],
+      });
+    }
   };
 
   // Restore active connections from backend on initial mount
@@ -304,34 +426,55 @@ const Dashboard: React.FC = () => {
     };
   }, [setSourceDb, setTargetDb]);
 
-  // Telemetry polling (only if source is active)
+  // Telemetry polling for both source and target connections when active
   useEffect(() => {
     let mounted = true;
-    const fetchTel = async () => {
+
+    const fetchAllTelemetry = async () => {
       const state = useAppStore.getState();
-      if (!state.sourceDb || state.sourceDb.status !== 'active') return;
-      try {
-        const tel = await getTelemetry();
-        if (mounted) {
-          updateSourceTelemetry({
-            cpuUsage: tel.cpuUsage,
-            memoryUsage: tel.memoryUsage,
-            diskUsage: Math.round(tel.diskUsage),
-            activeConnections: tel.activeConnections,
-          });
+
+      if (state.sourceDb?.status === 'active') {
+        try {
+          const tel = await getTelemetry({ target: 'source' });
+          if (mounted) {
+            updateSourceTelemetry({
+              cpuUsage: tel.cpuUsage,
+              memoryUsage: tel.memoryUsage,
+              diskUsage: Math.round(tel.diskUsage),
+              activeConnections: tel.activeConnections,
+            });
+          }
+        } catch (err) {
+          console.error('Source telemetry failed', err);
+          handleTelemetryError('source', err);
         }
-      } catch (err) {
-        console.error('Telemetry failed', err);
+      }
+
+      if (state.targetDb?.status === 'active') {
+        try {
+          const tel = await getTelemetry({ target: 'target' });
+          if (mounted) {
+            updateTargetTelemetry({
+              cpuUsage: tel.cpuUsage,
+              memoryUsage: tel.memoryUsage,
+              diskUsage: Math.round(tel.diskUsage),
+              activeConnections: tel.activeConnections,
+            });
+          }
+        } catch (err) {
+          console.error('Target telemetry failed', err);
+          handleTelemetryError('target', err);
+        }
       }
     };
 
-    void fetchTel();
-    const intv = setInterval(fetchTel, config.telemetryInterval * 1000);
+    void fetchAllTelemetry();
+    const intv = setInterval(fetchAllTelemetry, config.telemetryInterval * 1000);
     return () => {
       mounted = false;
       clearInterval(intv);
     };
-  }, [config.telemetryInterval, sourceDb?.status, updateSourceTelemetry]);
+  }, [config.telemetryInterval, sourceDb?.status, targetDb?.status, updateSourceTelemetry, updateTargetTelemetry]);
 
   // Check active job once on mount (no continuous polling if idle)
   useEffect(() => {
@@ -387,14 +530,16 @@ const Dashboard: React.FC = () => {
           { info: sourceDb, title: 'Source Database', target: 'source' as const },
           { info: targetDb, title: 'Target Database', target: 'target' as const },
         ]).map((item) => {
-          const isConnectionActive = item.info?.status === 'active';
+          const isConfigured = Boolean(item.info && item.info.dbName && item.info.dbName !== '-');
           return (
             <div key={item.target} className="flex flex-col gap-3">
               <DatabaseStatusCard info={item.info} title={item.title} />
               <Button
                 variant="secondary"
-                isDisabled={!isConnectionActive}
-                className="w-full flex items-center justify-center gap-2 font-semibold shadow-xs"
+                isDisabled={!isConfigured}
+                className={`w-full flex items-center justify-center gap-2 font-semibold shadow-xs ${
+                  isConfigured ? 'text-primary' : ''
+                }`}
                 onPress={() => handleOpenSchema(item.target, item.info)}
               >
                 <Layers size={16} />

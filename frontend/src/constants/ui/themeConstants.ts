@@ -12,7 +12,7 @@ export const dashboardTheme = {
   defaultEnvironmentClass: 'bg-gray-500/20 text-gray-700 dark:text-gray-400',
   connectionStatusClasses: {
     active: 'bg-green-600',
-    inactive: 'bg-red-600',
+    inactive: 'bg-warning',
     connecting: 'bg-yellow-600',
     pending: 'bg-yellow-600',
   },

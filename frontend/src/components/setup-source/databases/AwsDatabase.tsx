@@ -5,8 +5,11 @@ import { EnvironmentSelector } from '../common/EnvironmentSelector';
 import { StatusButton } from '../common/StatusButton';
 import type { ActionStatus } from '../common/StatusButton';
 import type { Environment } from '../../../store/useAppStore';
+import { DatabaseEngineSelector } from '../../common/DatabaseEngineSelector';
 
 interface AwsDatabaseProps {
+  databaseEngine: string;
+  setDatabaseEngine: (v: string) => void;
   isTunnelEstablished: boolean;
   localProxyPort: string;
   dbName: string;
@@ -25,6 +28,8 @@ interface AwsDatabaseProps {
 }
 
 export const AwsDatabase: React.FC<AwsDatabaseProps> = ({
+  databaseEngine,
+  setDatabaseEngine,
   isTunnelEstablished,
   localProxyPort,
   dbName,
@@ -54,6 +59,16 @@ export const AwsDatabase: React.FC<AwsDatabaseProps> = ({
       <Separator />
       <CardContent className="py-2">
         <form className="flex flex-col gap-6" onSubmit={(e) => e.preventDefault()}>
+          <div className="flex flex-col gap-1.5">
+            <label className={requiredLabelClass}>Database Engine</label>
+            <DatabaseEngineSelector
+              value={databaseEngine}
+              onChange={(engine) => setDatabaseEngine(engine)}
+              disabled={!isTunnelEstablished}
+              className="max-w-md"
+            />
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex flex-col gap-1.5 md:col-span-2">
               <label className={labelClass}>Host</label>

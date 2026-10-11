@@ -6,6 +6,7 @@ export interface SshMysqlConnectionInput {
   target?: ConnectionTarget;
   environment?: Environment;
   channelType?: string;
+  engine: string;
   ssh: {
     host: string;
     port: number;
@@ -28,6 +29,7 @@ export interface ActiveConnectionInfo {
   status: ConnectionStatus;
   dbName: string;
   channelType: string;
+  engine: string;
   username: string;
   environment: Environment;
   connection?: SshMysqlConnectionInput;

@@ -9,6 +9,7 @@ import type { ActionStatus } from '../setup-source/common/StatusButton';
 import { labelClass, requiredLabelClass } from '../setup-source/common/formStyles';
 import { EnvironmentSelector } from '../setup-source/common/EnvironmentSelector';
 import { SshChannel } from '../setup-source/channels/SshChannel';
+import { DatabaseEngineSelector } from '../common/DatabaseEngineSelector';
 import { CheckCircle2, AlertTriangle, Monitor, Network } from 'lucide-react';
 
 export const SetupTargetDB: React.FC = () => {
@@ -28,7 +29,7 @@ export const SetupTargetDB: React.FC = () => {
   const [insecureHostKey, setInsecureHostKey] = useState(false);
 
   // Database Connection Fields (Local Direct or through SSH)
-  const [databaseEngine, setDatabaseEngine] = useState('mysql');
+  const [databaseEngine, setDatabaseEngine] = useState('');
   const [mysqlHost, setMysqlHost] = useState('127.0.0.1');
   const [mysqlPort, setMysqlPort] = useState('3306');
   const [dbName, setDbName] = useState('stewrd_local');
@@ -51,6 +52,15 @@ export const SetupTargetDB: React.FC = () => {
   };
 
   const handleTestConnection = async () => {
+    if (!databaseEngine || databaseEngine === '-') {
+      setTestStatus('error');
+      setTestResult({
+        ok: false,
+        message: 'Database engine is required. Please select a database engine.',
+      });
+      return;
+    }
+
     setTestStatus('loading');
     setTestResult(null);
 
@@ -59,6 +69,7 @@ export const SetupTargetDB: React.FC = () => {
         target: 'target',
         environment: environment,
         channelType: isSsh ? 'SSH Tunnel' : 'Direct',
+        engine: databaseEngine,
         ssh: isSsh ? {
           host: sshHost.trim(),
           port: Number(sshPort),
@@ -82,7 +93,7 @@ export const SetupTargetDB: React.FC = () => {
 
       setTestResult({
         ok: true,
-        message: `Connected to MySQL ${result.serverVersion || ''} in ${result.latencyMs}ms`,
+        message: `Connected to ${result.serverVersion || databaseEngine.toUpperCase()} in ${result.latencyMs}ms`,
       });
       setTestStatus('success');
     } catch (err) {
@@ -96,7 +107,7 @@ export const SetupTargetDB: React.FC = () => {
       } else {
         setTestResult({
           ok: false,
-          message: 'Error testing local MySQL connection.',
+          message: `Error testing local ${databaseEngine.toUpperCase()} connection.`,
           detail: String(err),
         });
       }
@@ -104,6 +115,11 @@ export const SetupTargetDB: React.FC = () => {
   };
 
   const handleSaveConnection = async () => {
+    if (!databaseEngine || databaseEngine === '-') {
+      addNotification({ id: Date.now().toString(), message: 'Database engine is required. Please select a database engine.', status: 'error' });
+      return;
+    }
+
     const notifId = Date.now().toString();
     addNotification({ id: notifId, message: 'Saving local target connection...', status: 'loading' });
 
@@ -112,6 +128,7 @@ export const SetupTargetDB: React.FC = () => {
         target: 'target',
         environment: environment,
         channelType: isSsh ? 'SSH Tunnel' : 'Direct',
+        engine: databaseEngine,
         ssh: isSsh ? {
           host: sshHost,
           port: Number(sshPort),
@@ -137,6 +154,7 @@ export const SetupTargetDB: React.FC = () => {
         status: 'active',
         dbName: dbName || 'stewrd_local',
         channelType: isSsh ? 'SSH Tunnel' : 'Direct (Local)',
+        engine: databaseEngine,
         username: username,
         environment: environment,
       });
@@ -237,14 +255,12 @@ export const SetupTargetDB: React.FC = () => {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className={labelClass}>Database Engine</label>
-                <select
+                <DatabaseEngineSelector
                   value={databaseEngine}
-                  onChange={(e) => setDatabaseEngine(e.target.value)}
-                  style={{ colorScheme: 'dark' }}
-                  className="w-full h-10 bg-surface border border-separator text-foreground rounded-xl px-3 text-sm focus:outline-none focus:border-primary cursor-pointer transition-colors [color-scheme:dark]"
-                >
-                  <option className="bg-surface text-foreground" value="mysql">MySQL</option>
-                </select>
+                  onChange={(engine) => setDatabaseEngine(engine)}
+                  onAutoPortChange={(newPort) => setMysqlPort(newPort)}
+                  currentPort={mysqlPort}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className={labelClass}>Environment</label>
@@ -283,7 +299,7 @@ export const SetupTargetDB: React.FC = () => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
-                <label className={requiredLabelClass}>MySQL Username</label>
+                <label className={requiredLabelClass}>Database Username</label>
                 <Input
                   placeholder="root"
                   variant="primary"
@@ -295,7 +311,7 @@ export const SetupTargetDB: React.FC = () => {
               <div className="flex flex-col gap-1.5">
                 <label className={labelClass}>Password</label>
                 <Input
-                  placeholder="Password for local MySQL"
+                  placeholder="Password for local database"
                   type="password"
                   variant="primary"
                   value={password}

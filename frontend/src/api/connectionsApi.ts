@@ -33,10 +33,13 @@ interface ApiResponse<T> {
 
 export class ApiRequestError extends Error {
   readonly detailed: string;
+  readonly code: number;
 
-  constructor(summary: string, detailed: string) {
+  constructor(summary: string, detailed: string, code: number = 500) {
     super(summary);
+    this.name = 'ApiRequestError';
     this.detailed = detailed;
+    this.code = code;
   }
 }
 
@@ -52,7 +55,7 @@ async function post<TBody, TData>(path: string, body: TBody): Promise<TData> {
       body: JSON.stringify(body),
     });
   } catch (error) {
-    throw new ApiRequestError('Cannot reach the Stewrd backend', String(error));
+    throw new ApiRequestError('Cannot reach the Stewrd backend', String(error), 503);
   }
 
   let envelope: ApiResponse<TData> | null = null;
@@ -66,6 +69,7 @@ async function post<TBody, TData>(path: string, body: TBody): Promise<TData> {
     throw new ApiRequestError(
       envelope?.error?.summary ?? `Request failed (HTTP ${response.status})`,
       envelope?.error?.detailed ?? response.statusText,
+      envelope?.code ?? response.status,
     );
   }
   return envelope.data;
@@ -85,7 +89,15 @@ export async function saveConnection(
     body: JSON.stringify(req),
   });
   if (!res.ok) {
-    throw new ApiRequestError('Failed to save connection', String(res.status));
+    let json: any = null;
+    try {
+      json = await res.json();
+    } catch {}
+    throw new ApiRequestError(
+      json?.error?.summary ?? 'Failed to save connection',
+      json?.error?.detailed ?? String(res.status),
+      json?.code ?? res.status,
+    );
   }
 }
 
@@ -93,23 +105,49 @@ export async function getActiveConnection(
   target: ConnectionTarget,
 ): Promise<ActiveConnectionInfo | null> {
   const res = await fetch(`/api/connections/active?target=${encodeURIComponent(target)}`);
-  const json = await res.json();
-  if (!res.ok || !json.status) {
+  let json: ApiResponse<ActiveConnectionInfo> | null = null;
+  try {
+    json = (await res.json()) as ApiResponse<ActiveConnectionInfo>;
+  } catch {}
+  if (!res.ok || !json?.status) {
     throw new ApiRequestError(
       json?.error?.summary ?? 'Failed to get active connection',
       json?.error?.detailed ?? String(res.status),
+      json?.code ?? res.status,
     );
   }
   return json.data;
 }
 
+export async function removeActiveConnection(target: ConnectionTarget = 'source'): Promise<void> {
+  const res = await fetch(`/api/connections/active?target=${encodeURIComponent(target)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    let json: any = null;
+    try {
+      json = await res.json();
+    } catch {}
+    throw new ApiRequestError(
+      json?.error?.summary ?? 'Failed to remove active connection',
+      json?.error?.detailed ?? String(res.status),
+      json?.code ?? res.status,
+    );
+  }
+}
 
 export async function getTelemetry(req?: TelemetryRequest): Promise<TelemetryResponse> {
   const query = req?.target ? `?target=${encodeURIComponent(req.target)}` : '';
   const res = await fetch(`/api/connections/telemetry${query}`);
-  const json = await res.json();
-  if (!res.ok || !json.status) {
-    throw new ApiRequestError('Failed to get telemetry', String(res.status));
+  let json: ApiResponse<TelemetryResponse> | null = null;
+  try {
+    json = (await res.json()) as ApiResponse<TelemetryResponse>;
+  } catch {}
+  if (!res.ok || !json?.status || json.data === null) {
+    const summary = json?.error?.summary ?? `Failed to get telemetry (HTTP ${res.status})`;
+    const detailed = json?.error?.detailed ?? String(res.status);
+    const code = json?.code ?? res.status;
+    throw new ApiRequestError(summary, detailed, code);
   }
   return json.data;
 }
@@ -122,11 +160,15 @@ export async function getSchema(
     ? `?target=${encodeURIComponent(target)}&schema=${encodeURIComponent(schema)}`
     : `?target=${encodeURIComponent(target)}`;
   const res = await fetch(`/api/connections/schema${query}`);
-  const json = await res.json();
-  if (!res.ok || !json.status) {
+  let json: ApiResponse<DatabaseSchemaResponse> | null = null;
+  try {
+    json = (await res.json()) as ApiResponse<DatabaseSchemaResponse>;
+  } catch {}
+  if (!res.ok || !json?.status || json.data === null) {
     throw new ApiRequestError(
       json?.error?.summary ?? 'Failed to get schema',
       json?.error?.detailed ?? String(res.status),
+      json?.code ?? res.status,
     );
   }
   return json.data;

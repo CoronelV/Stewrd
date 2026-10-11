@@ -25,6 +25,7 @@ type SshMysqlConnection struct {
 	Target      string            `json:"target,omitempty"`
 	Environment string            `json:"environment,omitempty"`
 	ChannelType string            `json:"channelType,omitempty"`
+	Engine      string            `json:"engine"`
 	Ssh         SshTunnelSettings `json:"ssh"`
 	Mysql       MysqlEndpoint     `json:"mysql"`
 }
@@ -34,6 +35,7 @@ type ActiveConnectionInfo struct {
 	Status      string              `json:"status"`
 	DbName      string              `json:"dbName"`
 	ChannelType string              `json:"channelType"`
+	Engine      string              `json:"engine"`
 	Username    string              `json:"username"`
 	Environment string              `json:"environment"`
 	Connection  *SshMysqlConnection `json:"connection,omitempty"`

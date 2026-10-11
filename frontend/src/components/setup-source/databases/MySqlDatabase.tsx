@@ -5,6 +5,7 @@ import { EnvironmentSelector } from '../common/EnvironmentSelector';
 import { StatusButton } from '../common/StatusButton';
 import type { ActionStatus } from '../common/StatusButton';
 import type { Environment } from '../../../store/useAppStore';
+import { DatabaseEngineSelector } from '../../common/DatabaseEngineSelector';
 
 interface MySqlDatabaseProps {
   databaseEngine: string;
@@ -25,6 +26,10 @@ interface MySqlDatabaseProps {
   onTestConnection: () => void;
   onSaveConnection: () => void;
   testResult: { ok: boolean; message: string; detail?: string } | null;
+  stepNumber?: string;
+  subtitle?: string;
+  hostLabel?: string;
+  hostDescription?: string;
 }
 
 export const MySqlDatabase: React.FC<MySqlDatabaseProps> = ({
@@ -46,44 +51,45 @@ export const MySqlDatabase: React.FC<MySqlDatabaseProps> = ({
   onTestConnection,
   onSaveConnection,
   testResult,
+  stepNumber = '3.',
+  subtitle = 'Select your database engine and configure credentials.',
+  hostLabel = 'Database Hostname',
+  hostDescription = 'Database server host address.',
 }) => {
   return (
     <Card className="w-full">
       <CardHeader className="flex flex-col items-start gap-1 pb-2">
-        <p className="text-xl font-bold">3. Database Connection</p>
-        <p className="text-sm text-foreground/70">
-          Select your database engine and configure credentials to connect through the SSH tunnel.
-        </p>
+        <p className="text-xl font-bold">{stepNumber} Database Connection</p>
+        <p className="text-sm text-foreground/70">{subtitle}</p>
       </CardHeader>
       <Separator />
       <CardContent className="py-2">
         <form className="flex flex-col gap-6" onSubmit={(e) => e.preventDefault()}>
           <div className="flex flex-col gap-1.5">
             <label className={requiredLabelClass}>Database Engine</label>
-            <select
+            <DatabaseEngineSelector
               value={databaseEngine}
-              onChange={(e) => setDatabaseEngine(e.target.value)}
-              style={{ colorScheme: 'dark' }}
-              className="bg-surface border border-separator text-foreground rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary cursor-pointer transition-colors max-w-xs [color-scheme:dark]"
-            >
-              <option className="bg-surface text-foreground" value="mysql">MySQL</option>
-            </select>
+              onChange={(engine) => setDatabaseEngine(engine)}
+              onAutoPortChange={(newPort) => setMysqlPort(newPort)}
+              currentPort={mysqlPort}
+              className="max-w-md"
+            />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="flex flex-col gap-1.5 md:col-span-2">
-              <label className={requiredLabelClass}>MySQL Hostname</label>
+              <label className={requiredLabelClass}>{hostLabel}</label>
               <Input
-                placeholder="MySQL server host relative to the SSH server"
+                placeholder="127.0.0.1 or server host"
                 variant="primary"
                 value={mysqlHost}
                 onChange={(e) => setMysqlHost(e.target.value)}
                 required
               />
-              <p className="text-xs text-foreground/50">MySQL server host relative to the SSH server.</p>
+              <p className="text-xs text-foreground/50">{hostDescription}</p>
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className={requiredLabelClass}>MySQL Server Port</label>
+              <label className={requiredLabelClass}>Server Port</label>
               <Input
                 placeholder="3306"
                 type="number"
@@ -99,9 +105,9 @@ export const MySqlDatabase: React.FC<MySqlDatabaseProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className={requiredLabelClass}>MySQL Username</label>
+              <label className={requiredLabelClass}>Username</label>
               <Input
-                placeholder=""
+                placeholder="Username"
                 variant="primary"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
@@ -109,9 +115,9 @@ export const MySqlDatabase: React.FC<MySqlDatabaseProps> = ({
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <label className={requiredLabelClass}>MySQL Password</label>
+              <label className={requiredLabelClass}>Password</label>
               <Input
-                placeholder="Enter MySQL password"
+                placeholder="Enter database password"
                 type="password"
                 variant="primary"
                 value={password}
@@ -122,7 +128,7 @@ export const MySqlDatabase: React.FC<MySqlDatabaseProps> = ({
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className={labelClass}>Default Schema</label>
+            <label className={labelClass}>Default Schema / Database</label>
             <Input
               placeholder="DB schema to use as default (optional)"
               variant="primary"

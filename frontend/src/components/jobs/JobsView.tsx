@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, CardContent, Separator, Button, Chip, Spinner, Input } from '@heroui/react';
 import { useNavigate } from 'react-router-dom';
-import { Play, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Server, Database, Check, X } from 'lucide-react';
+import { Play, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Database, Check, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { validateReplication, startReplication } from '../../api/jobsApi';
 import { getSchema, getActiveConnection } from '../../api/connectionsApi';
 import { EnvironmentBadge } from '../common/EnvironmentBadge';
+import { DatabaseEngineIcon } from '../common/DatabaseEngineIcon';
+import { getEngineOption } from '../../constants/database/engineConstants';
 import type { JobValidationResult } from '../../api/requests.interface';
 
 export const JobsView: React.FC = () => {
@@ -48,7 +50,7 @@ export const JobsView: React.FC = () => {
       }
     };
 
-    if (sourceDb?.status === 'pending' || targetDb?.status === 'pending') {
+    if (sourceDb?.status !== 'active' || targetDb?.status !== 'active') {
       void restoreConnections();
     }
     return () => {
@@ -214,13 +216,20 @@ export const JobsView: React.FC = () => {
                 </span>
                 <EnvironmentBadge environment={sourceDb?.environment} size="sm" />
               </div>
-              <div className="flex items-center gap-2 mt-0.5">
-                <Server size={18} className="text-primary shrink-0" />
-                <div className="flex flex-col">
-                  <span className="font-semibold text-sm">
-                    {sourceDb?.dbName && sourceDb.dbName !== '-' ? sourceDb.dbName : 'Configured Source'}
-                  </span>
-                  <span className="text-xs text-foreground/50">
+              <div className="flex items-center gap-3 mt-0.5">
+                <div className="p-1.5 rounded-xl bg-default-200/60 border border-separator/60 shrink-0 flex items-center justify-center">
+                  <DatabaseEngineIcon engine={sourceDb?.engine || '-'} size={32} />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm truncate">
+                      {sourceDb?.dbName && sourceDb.dbName !== '-' ? sourceDb.dbName : 'Configured Source'}
+                    </span>
+                    <span className="text-[11px] font-semibold px-1.5 py-0.2 rounded bg-default-200/80 text-foreground/80">
+                      {getEngineOption(sourceDb?.engine).name}
+                    </span>
+                  </div>
+                  <span className="text-xs text-foreground/50 truncate">
                     Channel: {sourceDb?.channelType || '-'} • Status: {sourceDb?.status || 'inactive'}
                   </span>
                 </div>
@@ -286,14 +295,21 @@ export const JobsView: React.FC = () => {
                 </span>
                 <EnvironmentBadge environment={targetDb?.environment && targetDb.environment !== '-' ? targetDb.environment : 'DEV'} size="sm" />
               </div>
-              <div className="flex items-center gap-2 mt-0.5">
-                <Database size={18} className="text-primary shrink-0" />
-                <div className="flex flex-col">
-                  <span className="font-semibold text-sm">
-                    {targetDb?.dbName && targetDb.dbName !== '-' ? targetDb.dbName : 'stewrd_local'}
-                  </span>
-                  <span className="text-xs text-foreground/50">
-                    Status: {targetDb?.status || 'Pending setup'}
+              <div className="flex items-center gap-3 mt-0.5">
+                <div className="p-1.5 rounded-xl bg-default-200/60 border border-separator/60 shrink-0 flex items-center justify-center">
+                  <DatabaseEngineIcon engine={targetDb?.engine || '-'} size={32} />
+                </div>
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm truncate">
+                      {targetDb?.dbName && targetDb.dbName !== '-' ? targetDb.dbName : 'stewrd_local'}
+                    </span>
+                    <span className="text-[11px] font-semibold px-1.5 py-0.2 rounded bg-default-200/80 text-foreground/80">
+                      {getEngineOption(targetDb?.engine).name}
+                    </span>
+                  </div>
+                  <span className="text-xs text-foreground/50 truncate">
+                    Channel: {targetDb?.channelType || 'Direct (Local)'} • Status: {targetDb?.status || 'inactive'}
                   </span>
                 </div>
               </div>
