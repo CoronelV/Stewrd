@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardContent, Separator, Chip, Spinner, Button } from '@heroui/react';
-import { ArrowRight, Activity, Clock, Layers } from 'lucide-react';
+import { ArrowRight, Activity, Clock, Layers, PlayCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
 import { getTelemetry, getActiveConnection } from '../api/connectionsApi';
+import { getActiveJob } from '../api/jobsApi';
 import type {
   ConnectionStatus,
   DatabaseInfo,
@@ -12,6 +14,7 @@ import type {
 } from '../store/useAppStore';
 import { dashboardTheme } from '../constants/ui/themeConstants';
 import { SchemaDiagramModal } from './schema-diagram/SchemaDiagramModal';
+import { EnvironmentBadge } from './common/EnvironmentBadge';
 
 const StatusIndicator: React.FC<{ status: ConnectionStatus }> = ({ status }) => {
   const bgClass = dashboardTheme.connectionStatusClasses[status] || 'bg-gray-600';
@@ -46,8 +49,6 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
     );
   }
 
-  const envClass = dashboardTheme.environmentClasses[info.environment] || dashboardTheme.defaultEnvironmentClass;
-
   return (
     <Card className="w-full relative">
       <CardHeader className="flex flex-row items-start justify-between w-full">
@@ -57,12 +58,7 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
         </div>
         <div className="flex flex-col items-end gap-2">
           <StatusIndicator status={info.status} />
-          <Chip
-            size="md"
-            className={`font-bold uppercase border-none px-3 ${envClass}`}
-          >
-            {info.environment}
-          </Chip>
+          <EnvironmentBadge environment={info.environment} size="md" />
         </div>
       </CardHeader>
       <Separator />
@@ -125,26 +121,69 @@ const ConnectionStatsView: React.FC<{ stats: ConnectionStats, title: string }> =
 );
 
 const RunningJobCard: React.FC<{ jobInfo: RunningJobInfo | null }> = ({ jobInfo }) => {
-  if (!jobInfo) return null;
+  const navigate = useNavigate();
+
+  if (!jobInfo) {
+    return (
+      <Card className="w-full">
+        <CardHeader className="flex justify-between items-center">
+          <div className="flex items-center gap-2">
+            <Activity size={20} className="text-primary" />
+            <p className="text-md font-bold">Replication Job</p>
+          </div>
+          <Chip size="sm" variant="soft">No active runs</Chip>
+        </CardHeader>
+        <Separator />
+        <CardContent className="py-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-col gap-1 text-sm text-foreground/70">
+            <p className="font-semibold text-foreground">No replication jobs currently running.</p>
+            <p>You can launch &apos;Replicate in local&apos; to clone the schema and data into your local database.</p>
+          </div>
+          <Button
+            variant="primary"
+            className="font-bold flex items-center gap-2 shadow-xs"
+            onPress={() => navigate('/jobs')}
+          >
+            <PlayCircle size={16} />
+            Go to Jobs
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const statusColor =
+    jobInfo.status === 'running'
+      ? 'primary'
+      : jobInfo.status === 'completed'
+      ? 'success'
+      : jobInfo.status === 'failed'
+      ? 'danger'
+      : 'default';
 
   return (
     <Card className="w-full">
-      <CardHeader className="flex">
+      <CardHeader className="flex justify-between items-center">
         <div className="flex items-center gap-2">
           <Activity size={20} className="text-primary" />
-          <p className="text-md font-bold">Running Job</p>
-          <div className="ml-auto flex gap-2">
-            <Chip size="sm" variant="soft" className="capitalize">
-              {jobInfo.jobStats.phase}
-            </Chip>
-            <Chip size="sm" color={jobInfo.status === 'running' ? 'success' : 'default'} variant="soft" className="capitalize">
-              {jobInfo.status}
-            </Chip>
-          </div>
+          <p className="text-md font-bold">{jobInfo.name || 'Replicate in local'}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Chip size="sm" variant="soft" className="capitalize">
+            {jobInfo.jobStats.phase}
+          </Chip>
+          <Chip size="sm" color={statusColor as any} variant="soft" className="capitalize font-bold">
+            {jobInfo.status}
+          </Chip>
         </div>
       </CardHeader>
       <Separator />
-      <CardContent className="py-2">
+      <CardContent className="py-3">
+        {jobInfo.errorMessage && (
+          <div className="mb-4 p-3 rounded-lg bg-danger/10 border border-danger/30 text-danger text-xs font-mono">
+            Error: {jobInfo.errorMessage}
+          </div>
+        )}
         <div className="flex flex-col md:flex-row items-center justify-between gap-4 w-full">
           {/* Source Connection */}
           <div className="flex-1 w-full h-full">
@@ -226,6 +265,7 @@ const Dashboard: React.FC = () => {
   const [selectedDbInfo, setSelectedDbInfo] = useState<DatabaseInfo | null>(null);
 
   const handleOpenSchema = (target: ConnectionTarget, info: DatabaseInfo | null) => {
+    if (info?.status !== 'active') return;
     setSelectedSchemaTarget(target);
     setSelectedDbInfo(info);
   };
@@ -264,7 +304,7 @@ const Dashboard: React.FC = () => {
     };
   }, [setSourceDb, setTargetDb]);
 
-  // Telemetry polling
+  // Telemetry polling (only if source is active)
   useEffect(() => {
     let mounted = true;
     const fetchTel = async () => {
@@ -293,6 +333,50 @@ const Dashboard: React.FC = () => {
     };
   }, [config.telemetryInterval, sourceDb?.status, updateSourceTelemetry]);
 
+  // Check active job once on mount (no continuous polling if idle)
+  useEffect(() => {
+    let mounted = true;
+    const fetchInitialJob = async () => {
+      try {
+        const job = await getActiveJob();
+        if (mounted && job) {
+          useAppStore.getState().setRunningJob(job);
+        }
+      } catch (err) {
+        console.error('Active job check failed', err);
+      }
+    };
+
+    void fetchInitialJob();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // ONLY poll periodically if a job is currently running
+  useEffect(() => {
+    if (runningJob?.status !== 'running') {
+      return;
+    }
+
+    let mounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const job = await getActiveJob();
+        if (mounted) {
+          useAppStore.getState().setRunningJob(job);
+        }
+      } catch (err) {
+        console.error('Active job poll failed', err);
+      }
+    }, 2000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [runningJob?.status]);
+
   return (
     <div className="flex flex-col gap-6">
       <h2 className="text-2xl font-bold">Dashboard</h2>
@@ -302,19 +386,23 @@ const Dashboard: React.FC = () => {
         {([
           { info: sourceDb, title: 'Source Database', target: 'source' as const },
           { info: targetDb, title: 'Target Database', target: 'target' as const },
-        ]).map((item) => (
-          <div key={item.target} className="flex flex-col gap-3">
-            <DatabaseStatusCard info={item.info} title={item.title} />
-            <Button
-              variant="secondary"
-              className="w-full flex items-center justify-center gap-2 font-semibold shadow-xs"
-              onPress={() => handleOpenSchema(item.target, item.info)}
-            >
-              <Layers size={16} />
-              Show Schema
-            </Button>
-          </div>
-        ))}
+        ]).map((item) => {
+          const isConnectionActive = item.info?.status === 'active';
+          return (
+            <div key={item.target} className="flex flex-col gap-3">
+              <DatabaseStatusCard info={item.info} title={item.title} />
+              <Button
+                variant="secondary"
+                isDisabled={!isConnectionActive}
+                className="w-full flex items-center justify-center gap-2 font-semibold shadow-xs"
+                onPress={() => handleOpenSchema(item.target, item.info)}
+              >
+                <Layers size={16} />
+                Show Schema
+              </Button>
+            </div>
+          );
+        })}
       </div>
 
       {/* Second Section: Running Job */}

@@ -24,13 +24,15 @@ const (
 )
 
 type ConnectionService interface {
-	// TestSshMysql opens the SSH tunnel, connects to MySQL through it and
+	// TestSshMysql opens the SSH tunnel (if configured) or connects directly to MySQL and
 	// runs a trivial query. Everything is closed before returning.
 	TestSshMysql(ctx context.Context, input domain.SshMysqlConnection) (*domain.ConnectionTestResult, error)
 	SaveActiveSshMysql(ctx context.Context, target string, input domain.SshMysqlConnection) error
 	GetActiveConnection(ctx context.Context, target string) (*domain.ActiveConnectionInfo, error)
 	GetTelemetry(ctx context.Context) (*domain.TelemetryResponse, error)
 	GetSchema(ctx context.Context, target string, requestedSchema string) (*domain.DatabaseSchemaResponse, error)
+	OpenSession(ctx context.Context, target string) (*sql.DB, io.Closer, error)
+	GetRawConnection(ctx context.Context, target string) (*domain.SshMysqlConnection, error)
 }
 
 type connectionService struct {
@@ -46,35 +48,49 @@ func NewConnectionService(log logger.Logger) ConnectionService {
 }
 
 func (s *connectionService) openMysqlSession(ctx context.Context, input domain.SshMysqlConnection) (*sql.DB, io.Closer, error) {
-	tun, err := tunnel.Open(ctx, tunnel.Config{
-		Host:                  input.Ssh.Host,
-		Port:                  input.Ssh.Port,
-		User:                  input.Ssh.User,
-		Password:              input.Ssh.Password,
-		PrivateKeyPath:        input.Ssh.PrivateKeyPath,
-		KnownHostsPath:        input.Ssh.KnownHostsPath,
-		InsecureIgnoreHostKey: input.Ssh.InsecureIgnoreHostKey,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
+	var tun io.Closer
 
 	mysqlConfig := mysql.NewConfig()
 	mysqlConfig.User = input.Mysql.User
 	mysqlConfig.Passwd = input.Mysql.Password
-	mysqlConfig.DBName = input.Mysql.Schema
+	// For target connections, the schema might not exist yet (replication will create it).
+	// Connect to MySQL server without forcing an initial database.
+	if !strings.EqualFold(input.Target, "target") {
+		mysqlConfig.DBName = input.Mysql.Schema
+	}
 	mysqlConfig.Net = "tcp"
 	mysqlConfig.Addr = net.JoinHostPort(input.Mysql.Host, strconv.Itoa(input.Mysql.Port))
 	mysqlConfig.Timeout = mysqlDialTimeout
-	mysqlConfig.DialFunc = tun.DialContext
+	mysqlConfig.AllowNativePasswords = true
+	mysqlConfig.ParseTime = true
+
+	isDirect := strings.EqualFold(input.ChannelType, "Direct") || strings.TrimSpace(input.Ssh.Host) == ""
+	if !isDirect {
+		t, err := tunnel.Open(ctx, tunnel.Config{
+			Host:                  input.Ssh.Host,
+			Port:                  input.Ssh.Port,
+			User:                  input.Ssh.User,
+			Password:              input.Ssh.Password,
+			PrivateKeyPath:        input.Ssh.PrivateKeyPath,
+			KnownHostsPath:        input.Ssh.KnownHostsPath,
+			InsecureIgnoreHostKey: input.Ssh.InsecureIgnoreHostKey,
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		tun = t
+		mysqlConfig.DialFunc = t.DialContext
+	}
 
 	connector, err := mysql.NewConnector(mysqlConfig)
 	if err != nil {
-		_ = tun.Close()
+		if tun != nil {
+			_ = tun.Close()
+		}
 		return nil, nil, appErrors.New(appErrors.CodeValidation, "invalid mysql connection settings", err)
 	}
 	db := sql.OpenDB(connector)
-	db.SetMaxOpenConns(1)
+	db.SetMaxOpenConns(5)
 	return db, tun, nil
 }
 
@@ -93,20 +109,41 @@ func (s *connectionService) TestSshMysql(ctx context.Context, input domain.SshMy
 
 	db, tun, err := s.openMysqlSession(ctx, input)
 	if err != nil {
-		log.Error("ssh tunnel failed", err)
+		log.Error("connection session failed", err)
 		return nil, err
 	}
-	defer tun.Close()
+	if tun != nil {
+		defer tun.Close()
+	}
 	defer db.Close()
 
 	startedAt := time.Now()
 	var serverVersion string
 	if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&serverVersion); err != nil {
-		log.Error("mysql connection failed", err)
-		return nil, appErrors.New(appErrors.CodeConnection, "cannot connect to mysql through the ssh tunnel", err)
+		// If error is 1049 (Unknown database), retry at server level without the schema
+		if strings.Contains(err.Error(), "1049") || strings.Contains(err.Error(), "Unknown database") {
+			fallbackInput := input
+			fallbackInput.Mysql.Schema = ""
+			fallbackInput.Target = "target"
+			if fbDb, fbTun, fbErr := s.openMysqlSession(ctx, fallbackInput); fbErr == nil {
+				if fbTun != nil {
+					defer fbTun.Close()
+				}
+				defer fbDb.Close()
+				if fbErr := fbDb.QueryRowContext(ctx, "SELECT VERSION()").Scan(&serverVersion); fbErr == nil {
+					log.Info("mysql connection test succeeded without initial schema (schema will be created on replication)")
+					return &domain.ConnectionTestResult{
+						ServerVersion: serverVersion,
+						LatencyMs:     time.Since(startedAt).Milliseconds(),
+					}, nil
+				}
+			}
+		}
+		log.Error("mysql connection query failed", err)
+		return nil, appErrors.New(appErrors.CodeConnection, "cannot connect to mysql", err)
 	}
 
-	log.Info("mysql over ssh connection test succeeded")
+	log.Info("mysql connection test succeeded")
 	return &domain.ConnectionTestResult{
 		ServerVersion: serverVersion,
 		LatencyMs:     time.Since(startedAt).Milliseconds(),
@@ -173,6 +210,29 @@ func (s *connectionService) GetActiveConnection(ctx context.Context, target stri
 	}, nil
 }
 
+func (s *connectionService) GetRawConnection(ctx context.Context, target string) (*domain.SshMysqlConnection, error) {
+	var conn *domain.SshMysqlConnection
+	normalizedTarget := strings.ToLower(strings.TrimSpace(target))
+	if normalizedTarget == "target" {
+		conn = s.activeTargetConnection
+	} else {
+		conn = s.activeConnection
+	}
+
+	if conn == nil {
+		return nil, appErrors.New(appErrors.CodeValidation, "no active connection configured for "+target, nil)
+	}
+	return conn, nil
+}
+
+func (s *connectionService) OpenSession(ctx context.Context, target string) (*sql.DB, io.Closer, error) {
+	raw, err := s.GetRawConnection(ctx, target)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s.openMysqlSession(ctx, *raw)
+}
+
 
 func (s *connectionService) GetTelemetry(ctx context.Context) (*domain.TelemetryResponse, error) {
 	if s.activeConnection == nil {
@@ -189,7 +249,9 @@ func (s *connectionService) GetTelemetry(ctx context.Context) (*domain.Telemetry
 		s.logger.Error("ssh tunnel failed in telemetry", err)
 		return nil, err
 	}
-	defer tun.Close()
+	if tun != nil {
+		defer tun.Close()
+	}
 	defer db.Close()
 
 	var threadsValue string
@@ -234,7 +296,9 @@ func (s *connectionService) GetSchema(ctx context.Context, target string, reques
 		s.logger.Error("ssh tunnel failed in schema retrieval", err)
 		return nil, err
 	}
-	defer tun.Close()
+	if tun != nil {
+		defer tun.Close()
+	}
 	defer db.Close()
 
 	// Query available non-system schemas
@@ -252,7 +316,16 @@ func (s *connectionService) GetSchema(ctx context.Context, target string, reques
 
 	schemaName := strings.TrimSpace(requestedSchema)
 	if schemaName == "" {
-		schemaName = strings.TrimSpace(conn.Mysql.Schema)
+		candidate := strings.TrimSpace(conn.Mysql.Schema)
+		if candidate != "" {
+			// Check if configured schema actually exists in available schemas
+			for _, s := range availableSchemas {
+				if strings.EqualFold(s, candidate) {
+					schemaName = s
+					break
+				}
+			}
+		}
 	}
 	if schemaName == "" {
 		var currentDb sql.NullString
@@ -262,7 +335,18 @@ func (s *connectionService) GetSchema(ctx context.Context, target string, reques
 		}
 	}
 	if schemaName == "" && len(availableSchemas) > 0 {
-		schemaName = availableSchemas[0]
+		// Prefer the first schema that contains base tables
+		for _, s := range availableSchemas {
+			var tableCount int
+			_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'", s).Scan(&tableCount)
+			if tableCount > 0 {
+				schemaName = s
+				break
+			}
+		}
+		if schemaName == "" {
+			schemaName = availableSchemas[0]
+		}
 	}
 	if schemaName == "" {
 		return nil, appErrors.New(appErrors.CodeValidation, "no database schema specified or found in MySQL", nil)

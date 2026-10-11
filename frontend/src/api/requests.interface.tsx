@@ -72,3 +72,27 @@ export interface DatabaseSchemaResponse {
   tables: TableSchema[];
   relations: TableRelation[];
 }
+
+export interface ValidationStep {
+  key: string;
+  title: string;
+  status: 'success' | 'error' | 'warning';
+  message: string;
+  detail?: string;
+}
+
+export interface JobValidationResult {
+  valid: boolean;
+  sourceServer?: string;
+  targetServer?: string;
+  sourceVersion?: string;
+  targetVersion?: string;
+  steps: ValidationStep[];
+}
+
+export interface StartReplicationRequest {
+  sourceTarget?: ConnectionTarget;
+  destTarget?: ConnectionTarget;
+  sourceSchema?: string;
+  destSchema?: string;
+}

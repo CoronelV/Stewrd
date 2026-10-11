@@ -8,6 +8,10 @@ import (
 	"entgo.io/ent/schema/field"
 )
 
+type Job struct {
+	ent.Schema
+}
+
 func (Job) Fields() []ent.Field {
 	return []ent.Field{
 		// ID explícito de tipo string (puedes usar uuid si prefieres)

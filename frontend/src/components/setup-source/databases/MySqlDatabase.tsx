@@ -1,6 +1,7 @@
 import React from 'react';
 import { Card, CardHeader, CardContent, Input, Button, Separator } from '@heroui/react';
 import { labelClass, requiredLabelClass } from '../common/formStyles';
+import { EnvironmentSelector } from '../common/EnvironmentSelector';
 import { StatusButton } from '../common/StatusButton';
 import type { ActionStatus } from '../common/StatusButton';
 import type { Environment } from '../../../store/useAppStore';
@@ -62,9 +63,10 @@ export const MySqlDatabase: React.FC<MySqlDatabaseProps> = ({
             <select
               value={databaseEngine}
               onChange={(e) => setDatabaseEngine(e.target.value)}
-              className="bg-default-100 border border-default-200 text-foreground rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary cursor-pointer hover:bg-default-200 transition-colors max-w-xs"
+              style={{ colorScheme: 'dark' }}
+              className="bg-surface border border-separator text-foreground rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary cursor-pointer transition-colors max-w-xs [color-scheme:dark]"
             >
-              <option className="bg-background text-foreground" value="mysql">MySQL</option>
+              <option className="bg-surface text-foreground" value="mysql">MySQL</option>
             </select>
           </div>
 
@@ -140,17 +142,12 @@ export const MySqlDatabase: React.FC<MySqlDatabaseProps> = ({
             </div>
           )}
 
-          <div className="flex justify-end items-center gap-3 mt-2">
-            <select
+          <div className="flex flex-wrap justify-end items-center gap-3 mt-2">
+            <EnvironmentSelector
               value={environment}
-              onChange={(e) => setEnvironment(e.target.value as Environment)}
-              className="bg-default-100 border border-default-200 text-foreground rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary cursor-pointer hover:bg-default-200 transition-colors"
-            >
-              <option className="bg-background text-foreground" value="DEV">DEV</option>
-              <option className="bg-background text-foreground" value="STG">STG</option>
-              <option className="bg-background text-foreground" value="UAT">UAT</option>
-              <option className="bg-background text-foreground" value="PRD">PRD</option>
-            </select>
+              onChange={setEnvironment}
+              size="sm"
+            />
             <StatusButton
               status={testStatus}
               idleText="Test Connection"

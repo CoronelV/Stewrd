@@ -38,22 +38,25 @@ export interface ConnectionStats {
   latency: string;
 }
 
-interface JobStats {
+export interface JobStats {
   progress: number;
   eta: string;
   recordsToSync: number;
   recordsSynced: number;
   throughput: number;
   replicationLag: number;
-  phase: 'Initial Load' | 'CDC' | 'Validation';
+  phase: string;
   errors: number;
 }
 
 export interface RunningJobInfo {
-  status: 'running' | 'paused' | 'stopped' | 'idle';
+  jobId?: string;
+  name?: string;
+  status: 'running' | 'paused' | 'stopped' | 'idle' | 'completed' | 'failed' | 'cancelled';
   jobStats: JobStats;
   sourceConnection: ConnectionStats;
   targetConnection: ConnectionStats;
+  errorMessage?: string;
 }
 
 export interface AppState {
@@ -65,6 +68,8 @@ export interface AppState {
   config: AppConfig;
   setSourceDb: (info: DatabaseInfo) => void;
   setTargetDb: (info: DatabaseInfo) => void;
+  setRunningJob: (job: RunningJobInfo | null) => void;
+  updateRunningJob: (updates: Partial<RunningJobInfo>) => void;
   toggleTheme: () => void;
   addNotification: (notif: AppNotification) => void;
   updateNotification: (id: string, updates: Partial<AppNotification>) => void;
@@ -80,6 +85,10 @@ export const useAppStore = create<AppState>((set) => ({
   updateConfig: (updates: Partial<AppConfig>) => set((s) => ({ config: { ...s.config, ...updates } })),
   setSourceDb: (info) => set({ sourceDb: info }),
   setTargetDb: (info) => set({ targetDb: info }),
+  setRunningJob: (job) => set({ runningJob: job }),
+  updateRunningJob: (updates) => set((s) => ({
+    runningJob: s.runningJob ? { ...s.runningJob, ...updates } : null,
+  })),
   toggleTheme: () => set((state) => ({ theme: state.theme === 'dark' ? 'light' : 'dark' })),
   addNotification: (n) => {
     set((s) => ({ notifications: [n, ...s.notifications] }));

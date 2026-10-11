@@ -8,6 +8,10 @@ import (
 	"entgo.io/ent/schema/field"
 )
 
+type TableTask struct {
+	ent.Schema
+}
+
 // TableTask holds the schema definition for the TableTask entity.
 func (TableTask) Fields() []ent.Field {
 	return []ent.Field{

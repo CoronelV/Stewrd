@@ -1,6 +1,6 @@
 import type { AppState } from '../../store/useAppStore';
 
-export const mockDashboardState: Omit<AppState, 'setSourceDb' | 'setTargetDb' | 'toggleTheme' | 'addNotification' | 'updateNotification' | 'removeNotification' | 'updateSourceTelemetry' | 'updateConfig'> = {
+export const mockDashboardState: Omit<AppState, 'setSourceDb' | 'setTargetDb' | 'setRunningJob' | 'updateRunningJob' | 'toggleTheme' | 'addNotification' | 'updateNotification' | 'removeNotification' | 'updateSourceTelemetry' | 'updateConfig'> = {
   notifications: [],
   config: { telemetryInterval: 30 },
   sourceDb: {

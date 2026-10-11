@@ -23,7 +23,7 @@ import {
 import { getSchema } from '../../api/connectionsApi';
 import type { DatabaseSchemaResponse, TableSchema, TableRelation } from './types';
 import { TableNode, type TableNodeData } from './TableNode';
-import { dashboardTheme } from '../../constants/ui/themeConstants';
+import { EnvironmentBadge } from '../common/EnvironmentBadge';
 import type { Environment, ConnectionTarget } from '../../store/useAppStore';
 
 const CARD_WIDTH = 330;
@@ -181,7 +181,6 @@ export const SchemaDiagramModal: React.FC<SchemaDiagramModalProps> = ({
 
   if (!isOpen) return null;
 
-  const envClass = dashboardTheme.environmentClasses[environment] || dashboardTheme.defaultEnvironmentClass;
   const currentDbName = schemaData?.databaseName || dbName;
   const currentSchema = schemaData?.schema || '';
 
@@ -201,9 +200,7 @@ export const SchemaDiagramModal: React.FC<SchemaDiagramModalProps> = ({
               <div className="flex flex-col">
                 <div className="flex items-center gap-2">
                   <span className="text-lg font-bold tracking-tight text-foreground">{currentDbName}</span>
-                  <Chip size="sm" className={`font-bold uppercase border-none px-2.5 py-0.5 text-xs ${envClass}`}>
-                    {environment}
-                  </Chip>
+                  <EnvironmentBadge environment={environment} size="sm" />
                   <Chip size="sm" variant="soft" className="font-semibold text-xs capitalize">
                     {target === 'source' ? 'Source DB' : 'Target DB'}
                   </Chip>
@@ -220,7 +217,8 @@ export const SchemaDiagramModal: React.FC<SchemaDiagramModalProps> = ({
                           setSelectedSchema(newSchema);
                           void fetchSchema(newSchema);
                         }}
-                        className="bg-default-100 hover:bg-default-200 border border-separator/60 rounded px-1.5 py-0.5 text-xs font-mono font-semibold text-foreground/90 focus:outline-hidden focus:border-primary cursor-pointer transition-colors"
+                        style={{ colorScheme: 'dark' }}
+                        className="bg-default-100 hover:bg-default-200 border border-separator/60 rounded px-1.5 py-0.5 text-xs font-mono font-semibold text-foreground/90 focus:outline-hidden focus:border-primary cursor-pointer transition-colors [color-scheme:dark]"
                       >
                         {schemaData.availableSchemas.map((s) => (
                           <option key={s} value={s} className="bg-surface text-foreground font-mono">

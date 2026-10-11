@@ -47,9 +47,16 @@ func run(ctx context.Context, settingsPath string) error {
 		staticFs = nil
 	}
 
+	connService := service.NewConnectionService(log)
+	jobService := service.NewJobService(service.JobServiceDependencies{
+		ConnectionService: connService,
+		Logger:            log,
+	})
+
 	srv := server.New(server.Dependencies{
 		Settings:          settings.Server,
-		ConnectionService: service.NewConnectionService(log),
+		ConnectionService: connService,
+		JobService:        jobService,
 		StaticFs:          staticFs,
 		Logger:            log,
 	})

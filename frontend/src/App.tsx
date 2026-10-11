@@ -3,9 +3,11 @@ import { Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Button } from '@heroui/react';
 import Dashboard from './components/Dashboard';
 import { useAppStore } from './store/useAppStore';
-import { LayoutDashboard, Unplug, Sun, Moon, Menu, ChevronLeft, Settings } from 'lucide-react';
+import { LayoutDashboard, Unplug, Sun, Moon, Menu, ChevronLeft, Settings, PlayCircle } from 'lucide-react';
 
 import SetupSourceDB from './components/setup-source/SetupSourceDB';
+import SetupTargetDB from './components/setup-target/SetupTargetDB';
+import JobsView from './components/jobs/JobsView';
 import Configuration from './components/Configuration';
 import NotificationCenter from './components/NotificationCenter';
 
@@ -24,6 +26,7 @@ const App: React.FC = () => {
 
   const menuItems = [
     { label: 'Dashboard', path: '/', icon: <LayoutDashboard size={20} /> },
+    { label: 'Jobs', path: '/jobs', icon: <PlayCircle size={20} /> },
     { label: 'Set up source DB', path: '/setup-source', icon: <Unplug size={20} /> },
     { label: 'Set up target DB', path: '/setup-target', icon: <Unplug size={20} /> },
     { label: 'Configuration', path: '/configuration', icon: <Settings size={20} /> },
@@ -93,8 +96,9 @@ const App: React.FC = () => {
       <main className="flex-1 p-6 overflow-y-auto">
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/jobs" element={<JobsView />} />
           <Route path="/setup-source" element={<SetupSourceDB />} />
-          <Route path="/setup-target" element={<div>Set up target DB - Placeholder</div>} />
+          <Route path="/setup-target" element={<SetupTargetDB />} />
           <Route path="/configuration" element={<Configuration />} />
         </Routes>
       </main>

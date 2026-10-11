@@ -27,6 +27,11 @@ const (
 	routeConnectionActive = apiPrefix + "/connections/active"
 	routeConnectionTelemetry = apiPrefix + "/connections/telemetry"
 	routeConnectionSchema = apiPrefix + "/connections/schema"
+
+	routeJobReplicateValidate = apiPrefix + "/jobs/replicate-local/validate"
+	routeJobReplicateStart    = apiPrefix + "/jobs/replicate-local/start"
+	routeJobActive            = apiPrefix + "/jobs/active"
+	routeJobActiveCancel      = apiPrefix + "/jobs/active/cancel"
 )
 
 const (
@@ -52,6 +57,11 @@ const (
 	patternGetActiveConnection = http.MethodGet + " " + routeConnectionActive
 	patternGetTelemetry        = http.MethodGet + " " + routeConnectionTelemetry
 	patternGetSchema           = http.MethodGet + " " + routeConnectionSchema
+
+	patternValidateReplication = http.MethodPost + " " + routeJobReplicateValidate
+	patternStartReplication    = http.MethodPost + " " + routeJobReplicateStart
+	patternGetActiveJob        = http.MethodGet + " " + routeJobActive
+	patternCancelActiveJob     = http.MethodPost + " " + routeJobActiveCancel
 )
 
 type httpHandlers struct {
@@ -75,6 +85,10 @@ func (h *httpHandlers) register(mux *http.ServeMux) {
 	mux.HandleFunc(patternGetActiveConnection, h.getActiveConnection)
 	mux.HandleFunc(patternGetTelemetry, h.getTelemetry)
 	mux.HandleFunc(patternGetSchema, h.getSchema)
+	mux.HandleFunc(patternValidateReplication, h.validateReplication)
+	mux.HandleFunc(patternStartReplication, h.startReplication)
+	mux.HandleFunc(patternGetActiveJob, h.getActiveJob)
+	mux.HandleFunc(patternCancelActiveJob, h.cancelActiveJob)
 }
 
 func (h *httpHandlers) health(w http.ResponseWriter, r *http.Request) {
@@ -202,5 +216,42 @@ func (h *httpHandlers) getSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJson(w, http.StatusOK, schema)
+}
+
+func (h *httpHandlers) validateReplication(w http.ResponseWriter, r *http.Request) {
+	input, _ := decodeJson[domain.StartReplicationRequest](r)
+	result, err := h.jobs.ValidateReplication(r.Context(), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, result)
+}
+
+func (h *httpHandlers) startReplication(w http.ResponseWriter, r *http.Request) {
+	input, _ := decodeJson[domain.StartReplicationRequest](r)
+	jobInfo, err := h.jobs.StartReplication(r.Context(), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusAccepted, jobInfo)
+}
+
+func (h *httpHandlers) getActiveJob(w http.ResponseWriter, r *http.Request) {
+	jobInfo, err := h.jobs.GetActiveJob(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, jobInfo)
+}
+
+func (h *httpHandlers) cancelActiveJob(w http.ResponseWriter, r *http.Request) {
+	if err := h.jobs.CancelActiveJob(r.Context()); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, map[string]string{"status": "cancelled"})
 }
 
