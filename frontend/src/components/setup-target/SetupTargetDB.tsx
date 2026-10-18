@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card, CardHeader, CardContent, Separator, Input, Button } from '@heroui/react';
+import { Card, CardHeader, CardContent, Separator, Input, Button, Chip } from '@heroui/react';
 import { useNavigate } from 'react-router-dom';
 import { ApiRequestError, testConnection, saveConnection } from '../../api/connectionsApi';
 import { useAppStore } from '../../store/useAppStore';
@@ -10,41 +10,65 @@ import { labelClass, requiredLabelClass } from '../setup-source/common/formStyle
 import { EnvironmentSelector } from '../setup-source/common/EnvironmentSelector';
 import { SshChannel } from '../setup-source/channels/SshChannel';
 import { DatabaseEngineSelector } from '../common/DatabaseEngineSelector';
-import { CheckCircle2, AlertTriangle, Monitor, Network } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, Monitor, Network, Database } from 'lucide-react';
 
 export const SetupTargetDB: React.FC = () => {
   const navigate = useNavigate();
-  const { setTargetDb, addNotification, updateNotification } = useAppStore();
+  const { targetDb, setTargetDb, setAvailableSchemas: setStoreSchemas, setPreferredSchema, addNotification, updateNotification } = useAppStore();
 
-  const [connectionMethod, setConnectionMethod] = useState<'direct' | 'ssh'>('direct');
+  const initialChannel = targetDb?.channelType?.toLowerCase().includes('ssh') ? 'ssh' : 'direct';
+  const [connectionMethod, setConnectionMethod] = useState<'direct' | 'ssh'>(initialChannel);
   const isSsh = connectionMethod === 'ssh';
-  const [environment, setEnvironment] = useState<Environment>('DEV');
+  const [environment, setEnvironment] = useState<Environment>(
+    targetDb?.environment && targetDb.environment !== '-' ? targetDb.environment : 'DEV',
+  );
 
   // SSH Fields (if SSH mode selected)
-  const [sshHost, setSshHost] = useState('');
-  const [sshPort, setSshPort] = useState('22');
-  const [sshUsername, setSshUsername] = useState('');
-  const [sshPassword, setSshPassword] = useState('');
-  const [sshKeyFile, setSshKeyFile] = useState('');
-  const [insecureHostKey, setInsecureHostKey] = useState(false);
+  const [sshHost, setSshHost] = useState(targetDb?.connection?.ssh?.host || '');
+  const [sshPort, setSshPort] = useState(String(targetDb?.connection?.ssh?.port || 22));
+  const [sshUsername, setSshUsername] = useState(targetDb?.connection?.ssh?.user || '');
+  const [sshPassword, setSshPassword] = useState(targetDb?.connection?.ssh?.password || '');
+  const [sshKeyFile, setSshKeyFile] = useState(targetDb?.connection?.ssh?.privateKeyPath || '');
+  const [insecureHostKey, setInsecureHostKey] = useState(Boolean(targetDb?.connection?.ssh?.insecureIgnoreHostKey));
 
   // Database Connection Fields (Local Direct or through SSH)
-  const [databaseEngine, setDatabaseEngine] = useState('');
-  const [mysqlHost, setMysqlHost] = useState('127.0.0.1');
-  const [mysqlPort, setMysqlPort] = useState('3306');
-  const [dbName, setDbName] = useState('stewrd_local');
-  const [username, setUsername] = useState('root');
-  const [password, setPassword] = useState('');
+  const [databaseEngine, setDatabaseEngine] = useState(
+    targetDb?.engine && targetDb.engine !== '-' ? targetDb.engine : targetDb?.connection?.engine || '',
+  );
+  const [mysqlHost, setMysqlHost] = useState(targetDb?.connection?.mysql?.host || '127.0.0.1');
+  const [mysqlPort, setMysqlPort] = useState(String(targetDb?.connection?.mysql?.port || 3306));
+  const [dbName, setDbName] = useState(
+    targetDb?.dbName && targetDb.dbName !== '-'
+      ? targetDb.dbName
+      : targetDb?.connection?.mysql?.schema || '',
+  );
+  const [availableSchemas, setAvailableSchemas] = useState<string[]>(targetDb?.availableSchemas || []);
+  const [username, setUsername] = useState(
+    targetDb?.username && targetDb.username !== '-'
+      ? targetDb.username
+      : targetDb?.connection?.mysql?.user || 'root',
+  );
+  const [password, setPassword] = useState(targetDb?.connection?.mysql?.password || '');
 
   // Statuses & Feedback
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; detail?: string } | null>(null);
   const [testStatus, setTestStatus] = useState<ActionStatus>('idle');
+
+  const isConnectionValidated =
+    (testStatus === 'success' && Boolean(testResult?.ok)) || availableSchemas.length > 0;
+
+  const handleSelectDbName = (newSchema: string) => {
+    setDbName(newSchema);
+    setPreferredSchema('target', newSchema);
+  };
 
   const selectMethod = (method: 'direct' | 'ssh') => {
     if (method === connectionMethod) return;
     setConnectionMethod(method);
     setTestResult(null);
     setTestStatus('idle');
+    setAvailableSchemas([]);
+    setDbName('');
     if (method === 'direct') {
       setMysqlHost('127.0.0.1');
       setMysqlPort('3306');
@@ -65,10 +89,10 @@ export const SetupTargetDB: React.FC = () => {
     setTestResult(null);
 
     try {
-      const result = await testConnection({
-        target: 'target',
+      const connPayload = {
+        target: 'target' as const,
         environment: environment,
-        channelType: isSsh ? 'SSH Tunnel' : 'Direct',
+        channelType: isSsh ? 'SSH Tunnel' : 'Direct (Local)',
         engine: databaseEngine,
         ssh: isSsh ? {
           host: sshHost.trim(),
@@ -89,7 +113,15 @@ export const SetupTargetDB: React.FC = () => {
           password: password,
           schema: dbName.trim() || undefined,
         },
-      });
+      };
+      const result = await testConnection(connPayload);
+
+      const schemas = result.availableSchemas || [];
+      setAvailableSchemas(schemas);
+      setStoreSchemas('target', schemas);
+      if (dbName && !schemas.includes(dbName)) {
+        setDbName('');
+      }
 
       setTestResult({
         ok: true,
@@ -98,6 +130,7 @@ export const SetupTargetDB: React.FC = () => {
       setTestStatus('success');
     } catch (err) {
       setTestStatus('error');
+      setAvailableSchemas([]);
       if (err instanceof ApiRequestError) {
         setTestResult({
           ok: false,
@@ -124,16 +157,18 @@ export const SetupTargetDB: React.FC = () => {
     addNotification({ id: notifId, message: 'Saving local target connection...', status: 'loading' });
 
     try {
-      await saveConnection({
-        target: 'target',
+      const connPayload = {
+        target: 'target' as const,
         environment: environment,
-        channelType: isSsh ? 'SSH Tunnel' : 'Direct',
+        channelType: isSsh ? 'SSH Tunnel' : 'Direct (Local)',
         engine: databaseEngine,
+        availableSchemas,
         ssh: isSsh ? {
           host: sshHost,
           port: Number(sshPort),
           user: sshUsername,
           password: sshPassword,
+          privateKeyPath: sshKeyFile.trim() || undefined,
           insecureIgnoreHostKey: insecureHostKey,
         } : {
           host: '',
@@ -145,18 +180,30 @@ export const SetupTargetDB: React.FC = () => {
           port: Number(mysqlPort) || 3306,
           user: username.trim(),
           password: password,
-          schema: dbName.trim() || 'stewrd_local',
+          schema: dbName.trim() || undefined,
         },
-      }, 'target');
+      };
+      const saved = await saveConnection(connPayload, 'target');
+      const resolvedSchemas =
+        saved.availableSchemas && saved.availableSchemas.length > 0
+          ? saved.availableSchemas
+          : availableSchemas;
+      setAvailableSchemas(resolvedSchemas);
 
       setTargetDb({
+        ...saved,
         target: 'target',
         status: 'active',
-        dbName: dbName || 'stewrd_local',
+        dbName: saved.dbName || dbName.trim() || '-',
         channelType: isSsh ? 'SSH Tunnel' : 'Direct (Local)',
         engine: databaseEngine,
         username: username,
         environment: environment,
+        availableSchemas: resolvedSchemas,
+        connection: {
+          ...connPayload,
+          availableSchemas: resolvedSchemas,
+        },
       });
 
       updateNotification(notifId, { message: 'Local target connection configured successfully', status: 'success' });
@@ -246,7 +293,7 @@ export const SetupTargetDB: React.FC = () => {
         <CardHeader className="flex flex-col items-start gap-1 pb-2">
           <p className="text-xl font-bold">{isSsh ? '3.' : '2.'} Local Database Parameters</p>
           <p className="text-sm text-foreground/70">
-            Enter credentials and target schema on your local MySQL.
+            Enter credentials to connect to your target database server.
           </p>
         </CardHeader>
         <Separator />
@@ -320,20 +367,6 @@ export const SetupTargetDB: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <label className={requiredLabelClass}>Destination Database / Schema Name</label>
-              <Input
-                placeholder="stewrd_local"
-                variant="primary"
-                value={dbName}
-                onChange={(e) => setDbName(e.target.value)}
-                required
-              />
-              <p className="text-xs text-foreground/50">
-                The job will create this schema automatically if it does not yet exist on your local MySQL.
-              </p>
-            </div>
-
             {/* Test Connection Output */}
             {testResult && (
               <div
@@ -357,13 +390,52 @@ export const SetupTargetDB: React.FC = () => {
               </div>
             )}
 
+            {/* Post-Validation Preferred Schema Selection */}
+            {isConnectionValidated && (
+              <div className="flex flex-col gap-2.5 p-4 rounded-xl bg-default-100/80 border border-primary/25 animate-appearance-in">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Database size={16} className="text-primary shrink-0" />
+                    <label htmlFor="target-schema-selector" className={labelClass}>
+                      Preferred DB Schema (Default)
+                    </label>
+                  </div>
+                  <Chip size="sm" variant="soft" className="text-[11px] font-medium">
+                    Default for all actions • {availableSchemas.length} available
+                  </Chip>
+                </div>
+
+                <select
+                  id="target-schema-selector"
+                  value={dbName}
+                  onChange={(e) => handleSelectDbName(e.target.value)}
+                  style={{ colorScheme: 'dark' }}
+                  className="w-full bg-surface border border-separator text-foreground rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary cursor-pointer [color-scheme:dark]"
+                >
+                  <option value="" className="bg-surface text-foreground">
+                    No preferred schema (define on backup / select in each action)
+                  </option>
+                  {availableSchemas.map((schema) => (
+                    <option key={schema} value={schema} className="bg-surface text-foreground font-mono">
+                      {schema}
+                    </option>
+                  ))}
+                </select>
+
+                <p className="text-xs text-foreground/60">
+                  Select your preferred schema. It will be used as the default for all actions (Jobs, Data Comparison, Schema Viewer), though you can still change it right before executing any job or comparison.
+                </p>
+              </div>
+            )}
+
             {/* Actions */}
             <div className="flex flex-col sm:flex-row items-center justify-end gap-3 pt-3 border-t border-separator">
               <StatusButton
                 status={testStatus}
                 onPress={handleTestConnection}
                 idleText="Test Local Connection"
-                loadingText="Connecting to MySQL..."
+                loadingText="Validating..."
+                successText="Validated"
                 variant="secondary"
                 isDisabled={!mysqlHost || !username}
               />
@@ -384,3 +456,4 @@ export const SetupTargetDB: React.FC = () => {
 };
 
 export default SetupTargetDB;
+

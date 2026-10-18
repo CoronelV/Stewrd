@@ -48,6 +48,7 @@ func run(ctx context.Context, settingsPath string) error {
 	}
 
 	connService := service.NewConnectionService(log)
+	comparisonService := service.NewComparisonService(connService, log)
 	jobService := service.NewJobService(service.JobServiceDependencies{
 		ConnectionService: connService,
 		Logger:            log,
@@ -56,6 +57,7 @@ func run(ctx context.Context, settingsPath string) error {
 	srv := server.New(server.Dependencies{
 		Settings:          settings.Server,
 		ConnectionService: connService,
+		ComparisonService: comparisonService,
 		JobService:        jobService,
 		StaticFs:          staticFs,
 		Logger:            log,

@@ -22,28 +22,38 @@ type MysqlEndpoint struct {
 }
 
 type SshMysqlConnection struct {
-	Target      string            `json:"target,omitempty"`
-	Environment string            `json:"environment,omitempty"`
-	ChannelType string            `json:"channelType,omitempty"`
-	Engine      string            `json:"engine"`
-	Ssh         SshTunnelSettings `json:"ssh"`
-	Mysql       MysqlEndpoint     `json:"mysql"`
+	Target           string            `json:"target,omitempty"`
+	Environment      string            `json:"environment,omitempty"`
+	ChannelType      string            `json:"channelType,omitempty"`
+	Engine           string            `json:"engine"`
+	Ssh              SshTunnelSettings `json:"ssh"`
+	Mysql            MysqlEndpoint     `json:"mysql"`
+	AvailableSchemas []string          `json:"availableSchemas,omitempty"`
+	ServerVersion    string            `json:"serverVersion,omitempty"`
 }
 
 type ActiveConnectionInfo struct {
-	Target      string              `json:"target"`
-	Status      string              `json:"status"`
-	DbName      string              `json:"dbName"`
-	ChannelType string              `json:"channelType"`
-	Engine      string              `json:"engine"`
-	Username    string              `json:"username"`
-	Environment string              `json:"environment"`
-	Connection  *SshMysqlConnection `json:"connection,omitempty"`
+	Target           string              `json:"target"`
+	Status           string              `json:"status"`
+	DbName           string              `json:"dbName"`
+	ChannelType      string              `json:"channelType"`
+	Engine           string              `json:"engine"`
+	Username         string              `json:"username"`
+	Environment      string              `json:"environment"`
+	ServerVersion    string              `json:"serverVersion,omitempty"`
+	AvailableSchemas []string            `json:"availableSchemas"`
+	Connection       *SshMysqlConnection `json:"connection,omitempty"`
+}
+
+type UpdateSchemaRequest struct {
+	Target string `json:"target"`
+	Schema string `json:"schema"`
 }
 
 type ConnectionTestResult struct {
-	ServerVersion string `json:"serverVersion"`
-	LatencyMs     int64  `json:"latencyMs"`
+	ServerVersion    string   `json:"serverVersion"`
+	LatencyMs        int64    `json:"latencyMs"`
+	AvailableSchemas []string `json:"availableSchemas"`
 }
 
 type TelemetryResponse struct {

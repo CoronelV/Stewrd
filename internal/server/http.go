@@ -22,16 +22,23 @@ const (
 	routeJobCancel      = routeJobById + "/cancel"
 	routeJobTasks       = routeJobById + "/tasks"
 	routeTaskById       = apiPrefix + "/tasks/{" + pathParamTaskId + "}"
-	routeConnectionTest = apiPrefix + "/connections/test"
-	routeConnectionSave = apiPrefix + "/connections/save"
+	routeConnectionTest   = apiPrefix + "/connections/test"
+	routeConnectionSave   = apiPrefix + "/connections/save"
 	routeConnectionActive = apiPrefix + "/connections/active"
-	routeConnectionTelemetry = apiPrefix + "/connections/telemetry"
-	routeConnectionSchema = apiPrefix + "/connections/schema"
+	routeConnectionActiveSchema = apiPrefix + "/connections/active/schema"
+	routeConnectionSchemas      = apiPrefix + "/connections/schemas"
+	routeConnectionTelemetry    = apiPrefix + "/connections/telemetry"
+	routeConnectionSchema       = apiPrefix + "/connections/schema"
 
 	routeJobReplicateValidate = apiPrefix + "/jobs/replicate-local/validate"
 	routeJobReplicateStart    = apiPrefix + "/jobs/replicate-local/start"
 	routeJobActive            = apiPrefix + "/jobs/active"
 	routeJobActiveCancel      = apiPrefix + "/jobs/active/cancel"
+
+	routeComparisonSchemas         = apiPrefix + "/comparison/schemas"
+	routeComparisonValidateSchemas = apiPrefix + "/comparison/schemas/validate"
+	routeComparisonTables          = apiPrefix + "/comparison/tables"
+	routeComparisonData            = apiPrefix + "/comparison/data"
 )
 
 const (
@@ -52,17 +59,25 @@ const (
 	patternUpdateTask   = http.MethodPut + " " + routeTaskById     // 200 TableTask | 404 | 409
 	patternDeleteTask   = http.MethodDelete + " " + routeTaskById  // 204 | 404 | 409
 
-	patternTestConnection      = http.MethodPost + " " + routeConnectionTest
-	patternSaveConnection      = http.MethodPost + " " + routeConnectionSave
-	patternGetActiveConnection = http.MethodGet + " " + routeConnectionActive
+	patternTestConnection         = http.MethodPost + " " + routeConnectionTest
+	patternSaveConnection         = http.MethodPost + " " + routeConnectionSave
+	patternGetActiveConnection    = http.MethodGet + " " + routeConnectionActive
 	patternDeleteActiveConnection = http.MethodDelete + " " + routeConnectionActive
-	patternGetTelemetry        = http.MethodGet + " " + routeConnectionTelemetry
-	patternGetSchema           = http.MethodGet + " " + routeConnectionSchema
+	patternPutActiveSchema        = http.MethodPut + " " + routeConnectionActiveSchema
+	patternPostActiveSchema       = http.MethodPost + " " + routeConnectionActiveSchema
+	patternGetConnectionSchemas   = http.MethodGet + " " + routeConnectionSchemas
+	patternGetTelemetry           = http.MethodGet + " " + routeConnectionTelemetry
+	patternGetSchema              = http.MethodGet + " " + routeConnectionSchema
 
 	patternValidateReplication = http.MethodPost + " " + routeJobReplicateValidate
 	patternStartReplication    = http.MethodPost + " " + routeJobReplicateStart
 	patternGetActiveJob        = http.MethodGet + " " + routeJobActive
 	patternCancelActiveJob     = http.MethodPost + " " + routeJobActiveCancel
+
+	patternGetComparisonSchemas         = http.MethodGet + " " + routeComparisonSchemas
+	patternGetComparisonValidateSchemas = http.MethodGet + " " + routeComparisonValidateSchemas
+	patternGetComparisonTables          = http.MethodGet + " " + routeComparisonTables
+	patternPostComparisonData           = http.MethodPost + " " + routeComparisonData
 )
 
 type httpHandlers struct {
@@ -70,11 +85,12 @@ type httpHandlers struct {
 	tasks       service.TaskService
 	catalog     service.CatalogService
 	connections service.ConnectionService
+	comparison  service.ComparisonService
 	logger      logger.Logger
 }
 
-func newHttpHandlers(jobs service.JobService, tasks service.TaskService, catalog service.CatalogService, connections service.ConnectionService, log logger.Logger) *httpHandlers {
-	return &httpHandlers{jobs: jobs, tasks: tasks, catalog: catalog, connections: connections, logger: log}
+func newHttpHandlers(jobs service.JobService, tasks service.TaskService, catalog service.CatalogService, connections service.ConnectionService, comparison service.ComparisonService, log logger.Logger) *httpHandlers {
+	return &httpHandlers{jobs: jobs, tasks: tasks, catalog: catalog, connections: connections, comparison: comparison, logger: log}
 }
 
 // register wires only the implemented endpoints; the job/task handlers below
@@ -86,12 +102,19 @@ func (h *httpHandlers) register(mux *http.ServeMux) {
 	mux.HandleFunc(patternGetActiveConnection, h.getActiveConnection)
 	mux.HandleFunc(patternDeleteActiveConnection, h.removeActiveConnection)
 	mux.HandleFunc(http.MethodPost+" "+apiPrefix+"/connections/remove", h.removeActiveConnection)
+	mux.HandleFunc(patternPutActiveSchema, h.updatePreferredSchema)
+	mux.HandleFunc(patternPostActiveSchema, h.updatePreferredSchema)
+	mux.HandleFunc(patternGetConnectionSchemas, h.getConnectionSchemas)
 	mux.HandleFunc(patternGetTelemetry, h.getTelemetry)
 	mux.HandleFunc(patternGetSchema, h.getSchema)
 	mux.HandleFunc(patternValidateReplication, h.validateReplication)
 	mux.HandleFunc(patternStartReplication, h.startReplication)
 	mux.HandleFunc(patternGetActiveJob, h.getActiveJob)
 	mux.HandleFunc(patternCancelActiveJob, h.cancelActiveJob)
+	mux.HandleFunc(patternGetComparisonSchemas, h.getComparisonSchemas)
+	mux.HandleFunc(patternGetComparisonValidateSchemas, h.validateComparisonSchemas)
+	mux.HandleFunc(patternGetComparisonTables, h.getComparisonTables)
+	mux.HandleFunc(patternPostComparisonData, h.compareData)
 }
 
 func (h *httpHandlers) health(w http.ResponseWriter, r *http.Request) {
@@ -177,11 +200,12 @@ func (h *httpHandlers) saveConnection(w http.ResponseWriter, r *http.Request) {
 	if target == "" {
 		target = "source"
 	}
-	if err := h.connections.SaveActiveSshMysql(r.Context(), target, input); err != nil {
+	connInfo, err := h.connections.SaveActiveSshMysql(r.Context(), target, input)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJson(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJson(w, http.StatusOK, connInfo)
 }
 
 func (h *httpHandlers) getActiveConnection(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +231,40 @@ func (h *httpHandlers) removeActiveConnection(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJson(w, http.StatusOK, map[string]string{"status": "removed"})
+}
+
+func (h *httpHandlers) updatePreferredSchema(w http.ResponseWriter, r *http.Request) {
+	input, err := decodeJson[domain.UpdateSchemaRequest](r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = input.Target
+	}
+	if target == "" {
+		target = "source"
+	}
+	connInfo, err := h.connections.UpdatePreferredSchema(r.Context(), target, input.Schema)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, connInfo)
+}
+
+func (h *httpHandlers) getConnectionSchemas(w http.ResponseWriter, r *http.Request) {
+	target := r.URL.Query().Get("target")
+	if target == "" {
+		target = "source"
+	}
+	schemas, err := h.connections.GetAvailableSchemas(r.Context(), target)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, map[string][]string{"schemas": schemas})
 }
 
 
@@ -272,5 +330,57 @@ func (h *httpHandlers) cancelActiveJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJson(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+func (h *httpHandlers) getComparisonSchemas(w http.ResponseWriter, r *http.Request) {
+	schemas, err := h.comparison.GetCommonSchemas(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, schemas)
+}
+
+func (h *httpHandlers) validateComparisonSchemas(w http.ResponseWriter, r *http.Request) {
+	sourceSchema := r.URL.Query().Get("sourceSchema")
+	targetSchema := r.URL.Query().Get("targetSchema")
+	result, err := h.comparison.ValidateSchemas(r.Context(), sourceSchema, targetSchema)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, result)
+}
+
+func (h *httpHandlers) getComparisonTables(w http.ResponseWriter, r *http.Request) {
+	sourceSchema := r.URL.Query().Get("sourceSchema")
+	targetSchema := r.URL.Query().Get("targetSchema")
+	legacySchema := r.URL.Query().Get("schema")
+	if sourceSchema == "" {
+		sourceSchema = legacySchema
+	}
+	if targetSchema == "" {
+		targetSchema = legacySchema
+	}
+	tables, err := h.comparison.GetTablesOverview(r.Context(), sourceSchema, targetSchema)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, tables)
+}
+
+func (h *httpHandlers) compareData(w http.ResponseWriter, r *http.Request) {
+	input, err := decodeJson[domain.ComparisonDataRequest](r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	result, err := h.comparison.CompareData(r.Context(), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, result)
 }
 

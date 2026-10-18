@@ -7,6 +7,8 @@ export interface SshMysqlConnectionInput {
   environment?: Environment;
   channelType?: string;
   engine: string;
+  serverVersion?: string;
+  availableSchemas?: string[];
   ssh: {
     host: string;
     port: number;
@@ -32,6 +34,8 @@ export interface ActiveConnectionInfo {
   engine: string;
   username: string;
   environment: Environment;
+  serverVersion?: string;
+  availableSchemas?: string[];
   connection?: SshMysqlConnectionInput;
 }
 
@@ -97,4 +101,104 @@ export interface StartReplicationRequest {
   destTarget?: ConnectionTarget;
   sourceSchema?: string;
   destSchema?: string;
+}
+
+export interface CommonSchemasResponse {
+  schemas: string[];
+  sourceSchemas: string[];
+  targetSchemas: string[];
+  sourceActive: boolean;
+  targetActive: boolean;
+}
+
+export interface TableSchemaValidationItem {
+  tableName: string;
+  existsInSource: boolean;
+  existsInTarget: boolean;
+  compatible: boolean;
+  status: 'compatible' | 'column_mismatch' | 'missing_in_target' | 'missing_in_source';
+  sourceColumnCount: number;
+  targetColumnCount: number;
+  commonColumns: string[];
+  missingInTarget: string[];
+  missingInSource: string[];
+  typeMismatches: string[];
+}
+
+export interface SchemaValidationResponse {
+  sourceSchema: string;
+  targetSchema: string;
+  available: boolean;
+  status: 'valid' | 'warning' | 'invalid';
+  summary: string;
+  totalTables: number;
+  commonTables: number;
+  compatibleTables: number;
+  columnMismatchTables: number;
+  missingInTargetCount: number;
+  missingInSourceCount: number;
+  tables: TableSchemaValidationItem[];
+}
+
+export interface TableOverviewItem {
+  tableName: string;
+  sourceCount: number;
+  targetCount: number;
+  existsInSource: boolean;
+  existsInTarget: boolean;
+  primaryKeys: string[];
+  columns: string[];
+}
+
+export interface TableComparisonOverviewResponse {
+  schema: string;
+  sourceSchema: string;
+  targetSchema: string;
+  tables: TableOverviewItem[];
+}
+
+export type ComparisonFilter = 'differences' | 'only_target' | 'only_source';
+
+export interface ComparisonDataRequest {
+  schema?: string;
+  sourceSchema: string;
+  targetSchema: string;
+  table: string;
+  uniqueKeys: string[];
+  filter: ComparisonFilter;
+  limit?: number;
+  offset?: number;
+}
+
+export interface ComparisonStats {
+  sourceTotal: number;
+  targetTotal: number;
+  sourceOnlyCount: number;
+  targetOnlyCount: number;
+  differentCount: number;
+  identicalCount: number;
+}
+
+export interface ComparisonRow {
+  keyValues: Record<string, unknown>;
+  status: 'only_source' | 'only_target' | 'different';
+  differingColumns: string[];
+  sourceData: Record<string, unknown> | null;
+  targetData: Record<string, unknown> | null;
+}
+
+export interface ComparisonDataResponse {
+  schema: string;
+  sourceSchema: string;
+  targetSchema: string;
+  table: string;
+  columns: string[];
+  uniqueKeys: string[];
+  filter: string;
+  offset: number;
+  limit: number;
+  totalMatches: number;
+  hasMore: boolean;
+  stats: ComparisonStats;
+  rows: ComparisonRow[];
 }

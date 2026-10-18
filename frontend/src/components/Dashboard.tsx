@@ -1,9 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardContent, Separator, Chip, Spinner, Button } from '@heroui/react';
-import { ArrowRight, Activity, Clock, Layers, PlayCircle } from 'lucide-react';
+import { ArrowRight, Activity, Clock, Layers, PlayCircle, Database } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
-import { getTelemetry, getActiveConnection, removeActiveConnection } from '../api/connectionsApi';
+import {
+  getTelemetry,
+  getActiveConnection,
+  removeActiveConnection,
+  getConnectionSchemas,
+  updatePreferredSchema,
+} from '../api/connectionsApi';
 import { getActiveJob } from '../api/jobsApi';
 import { mockDashboardState } from '../constants/system/systemConstants';
 import type {
@@ -37,7 +43,41 @@ const StatusIndicator: React.FC<{ status: ConnectionStatus }> = ({ status }) => 
   );
 };
 
-const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }> = ({ info, title }) => {
+const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null; title: string }> = ({ info, title }) => {
+  const { setSourceDb, setTargetDb, setAvailableSchemas, setPreferredSchema, addNotification } = useAppStore();
+  const [isLoadingSchemas, setIsLoadingSchemas] = useState(false);
+  const [isUpdatingSchema, setIsUpdatingSchema] = useState(false);
+
+  const schemas = info?.availableSchemas || [];
+
+  useEffect(() => {
+    if (!info || info.status !== 'active') {
+      return;
+    }
+    if (info.availableSchemas && info.availableSchemas.length > 0) {
+      return;
+    }
+
+    let mounted = true;
+    setIsLoadingSchemas(true);
+
+    getConnectionSchemas(info.target)
+      .then((list) => {
+        if (!mounted) return;
+        setAvailableSchemas(info.target, list);
+      })
+      .catch((err) => {
+        console.error(`Failed to load available schemas for ${info.target}:`, err);
+      })
+      .finally(() => {
+        if (mounted) setIsLoadingSchemas(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [info?.status, info?.target, info?.availableSchemas?.length, setAvailableSchemas]);
+
   if (!info) {
     return (
       <Card className="w-full">
@@ -54,6 +94,44 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
 
   const hasEngine = Boolean(info.engine && info.engine !== '-' && info.engine.trim() !== '');
   const engineOption = getEngineOption(info.engine);
+  const currentPreferredSchema = info.dbName && info.dbName !== '-' ? info.dbName : '';
+  const schemaDisplay =
+    info.status === 'active' && !currentPreferredSchema
+      ? 'No preferred schema (per-action)'
+      : info.dbName;
+
+  const handlePreferredSchemaChange = async (newSchema: string) => {
+    setIsUpdatingSchema(true);
+    setPreferredSchema(info.target, newSchema);
+    try {
+      const updated = await updatePreferredSchema(info.target, newSchema);
+      const mergedSchemas =
+        updated.availableSchemas && updated.availableSchemas.length > 0
+          ? updated.availableSchemas
+          : schemas;
+      if (info.target === 'source') {
+        setSourceDb({ ...updated, availableSchemas: mergedSchemas });
+      } else {
+        setTargetDb({ ...updated, availableSchemas: mergedSchemas });
+      }
+      addNotification({
+        id: Date.now().toString(),
+        message: newSchema
+          ? `Preferred schema for ${title} set to '${newSchema}'`
+          : `Cleared preferred schema for ${title}`,
+        status: 'success',
+      });
+    } catch (err) {
+      console.error('Failed to update preferred schema:', err);
+      addNotification({
+        id: Date.now().toString(),
+        message: `Failed to update preferred schema for ${title}`,
+        status: 'error',
+      });
+    } finally {
+      setIsUpdatingSchema(false);
+    }
+  };
 
   return (
     <Card className="w-full relative">
@@ -72,7 +150,7 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
                 </div>
               )}
             </div>
-            <p className="text-small text-foreground/70 truncate">{info.dbName}</p>
+            <p className="text-small text-foreground/70 truncate">{schemaDisplay}</p>
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 shrink-0">
@@ -93,6 +171,41 @@ const DatabaseStatusCard: React.FC<{ info: DatabaseInfo | null, title: string }>
               <span className="text-sm font-medium truncate">{info.username}</span>
             </div>
           </div>
+
+          {info.status === 'active' && (
+            <div className="flex flex-col gap-1.5 p-3 rounded-xl bg-default-100/80 border border-primary/20">
+              <div className="flex items-center justify-between gap-2">
+                <label
+                  htmlFor={`dashboard-preferred-schema-${info.target}`}
+                  className="text-xs font-semibold text-foreground/80 flex items-center gap-1.5"
+                >
+                  <Database size={13} className="text-primary shrink-0" />
+                  <span>Preferred DB Schema (Default)</span>
+                </label>
+                {(isLoadingSchemas || isUpdatingSchema) && <Spinner size="sm" />}
+              </div>
+              <select
+                id={`dashboard-preferred-schema-${info.target}`}
+                value={currentPreferredSchema}
+                disabled={isLoadingSchemas || isUpdatingSchema}
+                onChange={(e) => void handlePreferredSchemaChange(e.target.value)}
+                style={{ colorScheme: 'dark' }}
+                className="w-full bg-surface border border-separator text-foreground rounded-lg px-2.5 py-1.5 text-xs font-mono font-medium focus:outline-none focus:border-primary cursor-pointer [color-scheme:dark]"
+              >
+                <option value="" className="bg-surface text-foreground font-sans">
+                  No preferred schema (select per action)
+                </option>
+                {schemas.map((schema) => (
+                  <option key={schema} value={schema} className="bg-surface text-foreground font-mono">
+                    {schema}
+                  </option>
+                ))}
+              </select>
+              <span className="text-[11px] text-foreground/55">
+                Used as default across Jobs, Data Comparison, and Schema Viewer.
+              </span>
+            </div>
+          )}
 
           {(info.status === 'active' || info.status === 'inactive' || info.status === 'pending') && (
             <>
@@ -289,7 +402,7 @@ const Dashboard: React.FC = () => {
   const [selectedDbInfo, setSelectedDbInfo] = useState<DatabaseInfo | null>(null);
 
   const handleOpenSchema = (target: ConnectionTarget, info: DatabaseInfo | null) => {
-    if (!info || info.dbName === '-' || !info.dbName) return;
+    if (!info || info.status !== 'active') return;
     setSelectedSchemaTarget(target);
     setSelectedDbInfo(info);
   };
@@ -299,11 +412,10 @@ const Dashboard: React.FC = () => {
     try {
       const active = await getActiveConnection(target);
       if (active && active.connection) {
-        const { connection, ...rest } = active;
         if (target === 'source') {
-          setSourceDb(rest);
+          setSourceDb(active);
         } else {
-          setTargetDb(rest);
+          setTargetDb(active);
         }
         const tel = await getTelemetry({ target });
         if (target === 'source') {
@@ -406,13 +518,11 @@ const Dashboard: React.FC = () => {
         if (!mounted) return;
 
         if (sourceRes.status === 'fulfilled' && sourceRes.value) {
-          const { connection, ...rest } = sourceRes.value;
-          setSourceDb(rest);
+          setSourceDb(sourceRes.value);
         }
 
         if (targetRes.status === 'fulfilled' && targetRes.value) {
-          const { connection, ...rest } = targetRes.value;
-          setTargetDb(rest);
+          setTargetDb(targetRes.value);
         }
       } catch (err) {
         console.error('Failed to restore active connections', err);
@@ -530,7 +640,7 @@ const Dashboard: React.FC = () => {
           { info: sourceDb, title: 'Source Database', target: 'source' as const },
           { info: targetDb, title: 'Target Database', target: 'target' as const },
         ]).map((item) => {
-          const isConfigured = Boolean(item.info && item.info.dbName && item.info.dbName !== '-');
+          const isConfigured = Boolean(item.info && item.info.status === 'active');
           return (
             <div key={item.target} className="flex flex-col gap-3">
               <DatabaseStatusCard info={item.info} title={item.title} />
@@ -559,7 +669,10 @@ const Dashboard: React.FC = () => {
           isOpen={!!selectedSchemaTarget}
           onClose={() => setSelectedSchemaTarget(null)}
           target={selectedSchemaTarget}
-          dbName={selectedDbInfo.dbName}
+          dbName={
+            (selectedSchemaTarget === 'source' ? sourceDb?.dbName : targetDb?.dbName) ||
+            selectedDbInfo.dbName
+          }
           environment={selectedDbInfo.environment}
           channelType={selectedDbInfo.channelType}
         />

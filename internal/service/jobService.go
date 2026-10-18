@@ -167,11 +167,15 @@ func (s *jobService) ValidateReplication(ctx context.Context, req domain.StartRe
 		})
 		return result, nil
 	}
+	sourceConfigMsg := fmt.Sprintf("Source connection configured (%s:%d).", sourceConn.Mysql.Host, sourceConn.Mysql.Port)
+	if sName := strings.TrimSpace(sourceConn.Mysql.Schema); sName != "" && sName != "-" {
+		sourceConfigMsg = fmt.Sprintf("Source database configured ('%s').", sName)
+	}
 	result.Steps = append(result.Steps, domain.ValidationStep{
 		Key:     "source_config",
 		Title:   "Source Database Configuration",
 		Status:  "success",
-		Message: fmt.Sprintf("Source database configured ('%s').", sourceConn.Mysql.Schema),
+		Message: sourceConfigMsg,
 	})
 
 	// 3. Validate Local MySQL service and connectivity

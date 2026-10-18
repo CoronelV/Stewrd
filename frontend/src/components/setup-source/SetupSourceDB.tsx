@@ -13,12 +13,21 @@ import { Monitor, Network, Cloud } from 'lucide-react';
 
 const SetupSourceDB: React.FC = () => {
   const navigate = useNavigate();
-  const { setSourceDb, addNotification, updateNotification } = useAppStore();
-  const [connectionMethod, setConnectionMethod] = useState<'direct' | 'ssh' | 'aws_ssm'>('direct');
+  const { sourceDb, setSourceDb, setAvailableSchemas: setStoreSchemas, setPreferredSchema, addNotification, updateNotification } = useAppStore();
+
+  const initialChannel = sourceDb?.channelType?.toLowerCase().includes('ssh')
+    ? 'ssh'
+    : sourceDb?.channelType?.toLowerCase().includes('aws')
+    ? 'aws_ssm'
+    : 'direct';
+
+  const [connectionMethod, setConnectionMethod] = useState<'direct' | 'ssh' | 'aws_ssm'>(initialChannel);
   const isDirect = connectionMethod === 'direct';
   const isSsh = connectionMethod === 'ssh';
   const isAws = connectionMethod === 'aws_ssm';
-  const [environment, setEnvironment] = useState<Environment>('DEV');
+  const [environment, setEnvironment] = useState<Environment>(
+    sourceDb?.environment && sourceDb.environment !== '-' ? sourceDb.environment : 'DEV',
+  );
 
   // AWS SSM
   const [awsProfile, setAwsProfile] = useState('');
@@ -28,20 +37,31 @@ const SetupSourceDB: React.FC = () => {
   const [localProxyPort, setLocalProxyPort] = useState('');
 
   // SSH
-  const [sshHost, setSshHost] = useState('ssh.pythonanywhere.com');
-  const [sshPort, setSshPort] = useState('22');
-  const [sshUsername, setSshUsername] = useState('');
-  const [sshPassword, setSshPassword] = useState('');
-  const [sshKeyFile, setSshKeyFile] = useState('');
-  const [insecureHostKey, setInsecureHostKey] = useState(false);
+  const [sshHost, setSshHost] = useState(sourceDb?.connection?.ssh?.host || 'ssh.pythonanywhere.com');
+  const [sshPort, setSshPort] = useState(String(sourceDb?.connection?.ssh?.port || 22));
+  const [sshUsername, setSshUsername] = useState(sourceDb?.connection?.ssh?.user || '');
+  const [sshPassword, setSshPassword] = useState(sourceDb?.connection?.ssh?.password || '');
+  const [sshKeyFile, setSshKeyFile] = useState(sourceDb?.connection?.ssh?.privateKeyPath || '');
+  const [insecureHostKey, setInsecureHostKey] = useState(Boolean(sourceDb?.connection?.ssh?.insecureIgnoreHostKey));
 
   // Database
-  const [databaseEngine, setDatabaseEngine] = useState('');
-  const [mysqlHost, setMysqlHost] = useState('');
-  const [mysqlPort, setMysqlPort] = useState('3306');
-  const [dbName, setDbName] = useState('');
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const [databaseEngine, setDatabaseEngine] = useState(
+    sourceDb?.engine && sourceDb.engine !== '-' ? sourceDb.engine : sourceDb?.connection?.engine || '',
+  );
+  const [mysqlHost, setMysqlHost] = useState(sourceDb?.connection?.mysql?.host || '');
+  const [mysqlPort, setMysqlPort] = useState(String(sourceDb?.connection?.mysql?.port || 3306));
+  const [dbName, setDbName] = useState(
+    sourceDb?.dbName && sourceDb.dbName !== '-'
+      ? sourceDb.dbName
+      : sourceDb?.connection?.mysql?.schema || '',
+  );
+  const [availableSchemas, setAvailableSchemas] = useState<string[]>(sourceDb?.availableSchemas || []);
+  const [username, setUsername] = useState(
+    sourceDb?.username && sourceDb.username !== '-'
+      ? sourceDb.username
+      : sourceDb?.connection?.mysql?.user || '',
+  );
+  const [password, setPassword] = useState(sourceDb?.connection?.mysql?.password || '');
 
   // Statuses
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; detail?: string } | null>(null);
@@ -51,6 +71,11 @@ const SetupSourceDB: React.FC = () => {
   const [sshTestStatus, setSshTestStatus] = useState<ActionStatus>('idle');
   const [isGenerating, setIsGenerating] = useState(false);
 
+  const handleSelectDbName = (newSchema: string) => {
+    setDbName(newSchema);
+    setPreferredSchema('source', newSchema);
+  };
+
   const selectMethod = (method: 'direct' | 'ssh' | 'aws_ssm') => {
     if (method === connectionMethod) return;
     setConnectionMethod(method);
@@ -58,6 +83,8 @@ const SetupSourceDB: React.FC = () => {
     setAwsTestStatus('idle');
     setSshTestStatus('idle');
     setTestResult(null);
+    setAvailableSchemas([]);
+    setDbName('');
     if (method === 'direct' && !mysqlHost) {
       setMysqlHost('127.0.0.1');
     }
@@ -95,11 +122,12 @@ const SetupSourceDB: React.FC = () => {
 
     try {
       if (connectionMethod === 'direct') {
-        await saveConnection({
-          target: 'source',
+        const connPayload = {
+          target: 'source' as const,
           environment: environment,
           channelType: 'Direct (Local)',
           engine: databaseEngine,
+          availableSchemas,
           ssh: {
             host: '',
             port: 22,
@@ -112,28 +140,42 @@ const SetupSourceDB: React.FC = () => {
             password: password,
             schema: dbName.trim() || undefined,
           },
-        }, 'source');
+        };
+        const saved = await saveConnection(connPayload, 'source');
+        const resolvedSchemas =
+          saved.availableSchemas && saved.availableSchemas.length > 0
+            ? saved.availableSchemas
+            : availableSchemas;
+        setAvailableSchemas(resolvedSchemas);
 
         setSourceDb({
+          ...saved,
           target: 'source',
           status: 'active',
-          dbName: dbName.trim() || '-',
+          dbName: saved.dbName || dbName.trim() || '-',
           channelType: 'Direct (Local)',
           engine: databaseEngine,
           username: username.trim(),
           environment: environment,
+          availableSchemas: resolvedSchemas,
+          connection: {
+            ...connPayload,
+            availableSchemas: resolvedSchemas,
+          },
         });
       } else if (connectionMethod === 'ssh') {
-        await saveConnection({
-          target: 'source',
+        const connPayload = {
+          target: 'source' as const,
           environment: environment,
           channelType: 'SSH Tunnel',
           engine: databaseEngine,
+          availableSchemas,
           ssh: {
             host: sshHost,
             port: Number(sshPort),
             user: sshUsername,
             password: sshPassword,
+            privateKeyPath: sshKeyFile.trim() || undefined,
             insecureIgnoreHostKey: insecureHostKey,
           },
           mysql: {
@@ -141,18 +183,30 @@ const SetupSourceDB: React.FC = () => {
             port: Number(mysqlPort),
             user: username,
             password: password,
-            schema: dbName,
+            schema: dbName.trim() || undefined,
           },
-        }, 'source');
+        };
+        const saved = await saveConnection(connPayload, 'source');
+        const resolvedSchemas =
+          saved.availableSchemas && saved.availableSchemas.length > 0
+            ? saved.availableSchemas
+            : availableSchemas;
+        setAvailableSchemas(resolvedSchemas);
 
         setSourceDb({
+          ...saved,
           target: 'source',
           status: 'active',
-          dbName: dbName || '-',
+          dbName: saved.dbName || dbName.trim() || '-',
           channelType: 'SSH Tunnel',
           engine: databaseEngine,
           username: username,
           environment: environment,
+          availableSchemas: resolvedSchemas,
+          connection: {
+            ...connPayload,
+            availableSchemas: resolvedSchemas,
+          },
         });
       } else {
         await new Promise(resolve => setTimeout(resolve, 1500));
@@ -160,11 +214,12 @@ const SetupSourceDB: React.FC = () => {
         setSourceDb({
           target: 'source',
           status: 'active',
-          dbName: dbName || '-',
+          dbName: dbName.trim() || '-',
           channelType: 'AWS SSM',
           engine: databaseEngine,
           username: username,
           environment: environment,
+          availableSchemas,
         });
       }
 
@@ -190,10 +245,10 @@ const SetupSourceDB: React.FC = () => {
 
     try {
       const isDirectConn = connectionMethod === 'direct';
-      const result = await testConnection({
-        target: 'source',
+      const connPayload = {
+        target: 'source' as const,
         environment: environment,
-        channelType: isDirectConn ? 'Direct' : 'SSH Tunnel',
+        channelType: isDirectConn ? 'Direct (Local)' : 'SSH Tunnel',
         engine: databaseEngine,
         ssh: isDirectConn ? {
           host: '',
@@ -214,7 +269,15 @@ const SetupSourceDB: React.FC = () => {
           password: password,
           schema: dbName.trim() || undefined,
         },
-      });
+      };
+      const result = await testConnection(connPayload);
+
+      const schemas = result.availableSchemas || [];
+      setAvailableSchemas(schemas);
+      setStoreSchemas('source', schemas);
+      if (dbName && !schemas.includes(dbName)) {
+        setDbName('');
+      }
 
       setTestResult({
         ok: true,
@@ -223,6 +286,7 @@ const SetupSourceDB: React.FC = () => {
       setSshTestStatus('success');
     } catch (err) {
       setSshTestStatus('error');
+      setAvailableSchemas([]);
       if (err instanceof ApiRequestError) {
         setTestResult({
           ok: false,
@@ -324,7 +388,8 @@ const SetupSourceDB: React.FC = () => {
           password={password}
           setPassword={setPassword}
           dbName={dbName}
-          setDbName={setDbName}
+          setDbName={handleSelectDbName}
+          availableSchemas={availableSchemas}
           environment={environment}
           setEnvironment={setEnvironment}
           testStatus={sshTestStatus}
@@ -387,7 +452,8 @@ const SetupSourceDB: React.FC = () => {
           password={password}
           setPassword={setPassword}
           dbName={dbName}
-          setDbName={setDbName}
+          setDbName={handleSelectDbName}
+          availableSchemas={availableSchemas}
           environment={environment}
           setEnvironment={setEnvironment}
           testStatus={sshTestStatus}
@@ -409,7 +475,8 @@ const SetupSourceDB: React.FC = () => {
           isTunnelEstablished={isTunnelEstablished}
           localProxyPort={localProxyPort}
           dbName={dbName}
-          setDbName={setDbName}
+          setDbName={handleSelectDbName}
+          availableSchemas={availableSchemas}
           username={username}
           setUsername={setUsername}
           password={password}

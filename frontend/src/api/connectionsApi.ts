@@ -22,6 +22,7 @@ export type {
 export interface ConnectionTestResult {
   serverVersion: string;
   latencyMs: number;
+  availableSchemas?: string[];
 }
 
 interface ApiResponse<T> {
@@ -82,23 +83,36 @@ export const testConnection = (input: SshMysqlConnectionInput) =>
 export async function saveConnection(
   req: SshMysqlConnectionInput,
   target: ConnectionTarget = 'source',
-): Promise<void> {
+): Promise<ActiveConnectionInfo> {
   const res = await fetch(`/api/connections/save?target=${encodeURIComponent(target)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(req),
   });
-  if (!res.ok) {
-    let json: any = null;
-    try {
-      json = await res.json();
-    } catch {}
+  let json: ApiResponse<ActiveConnectionInfo> | null = null;
+  try {
+    json = (await res.json()) as ApiResponse<ActiveConnectionInfo>;
+  } catch {}
+  if (!res.ok || !json?.status) {
     throw new ApiRequestError(
       json?.error?.summary ?? 'Failed to save connection',
       json?.error?.detailed ?? String(res.status),
       json?.code ?? res.status,
     );
   }
+  return (
+    json.data ?? {
+      target,
+      status: 'active',
+      dbName: req.mysql.schema?.trim() || '-',
+      channelType: req.channelType || 'Direct (Local)',
+      engine: req.engine,
+      username: req.mysql.user,
+      environment: req.environment || 'DEV',
+      availableSchemas: req.availableSchemas || [],
+      connection: req,
+    }
+  );
 }
 
 export async function getActiveConnection(
@@ -173,5 +187,45 @@ export async function getSchema(
   }
   return json.data;
 }
+
+export async function getConnectionSchemas(target: ConnectionTarget = 'source'): Promise<string[]> {
+  const res = await fetch(`/api/connections/schemas?target=${encodeURIComponent(target)}`);
+  let json: ApiResponse<{ schemas: string[] }> | null = null;
+  try {
+    json = (await res.json()) as ApiResponse<{ schemas: string[] }>;
+  } catch {}
+  if (!res.ok || !json?.status || !json.data) {
+    throw new ApiRequestError(
+      json?.error?.summary ?? 'Failed to get connection schemas',
+      json?.error?.detailed ?? String(res.status),
+      json?.code ?? res.status,
+    );
+  }
+  return json.data.schemas || [];
+}
+
+export async function updatePreferredSchema(
+  target: ConnectionTarget,
+  schema: string,
+): Promise<ActiveConnectionInfo> {
+  const res = await fetch(`/api/connections/active/schema?target=${encodeURIComponent(target)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ target, schema }),
+  });
+  let json: ApiResponse<ActiveConnectionInfo> | null = null;
+  try {
+    json = (await res.json()) as ApiResponse<ActiveConnectionInfo>;
+  } catch {}
+  if (!res.ok || !json?.status || !json.data) {
+    throw new ApiRequestError(
+      json?.error?.summary ?? 'Failed to update preferred schema',
+      json?.error?.detailed ?? String(res.status),
+      json?.code ?? res.status,
+    );
+  }
+  return json.data;
+}
+
 
 

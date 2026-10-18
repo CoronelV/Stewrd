@@ -24,7 +24,7 @@ import { getSchema } from '../../api/connectionsApi';
 import type { DatabaseSchemaResponse, TableSchema, TableRelation } from './types';
 import { TableNode, type TableNodeData } from './TableNode';
 import { EnvironmentBadge } from '../common/EnvironmentBadge';
-import type { Environment, ConnectionTarget } from '../../store/useAppStore';
+import { useAppStore, type Environment, type ConnectionTarget } from '../../store/useAppStore';
 
 const CARD_WIDTH = 330;
 const CARD_GAP_X = 140;
@@ -52,6 +52,10 @@ export const SchemaDiagramModal: React.FC<SchemaDiagramModalProps> = ({
   dbName,
   environment,
 }) => {
+  const { sourceDb, targetDb, setAvailableSchemas } = useAppStore();
+  const storeSchemas =
+    (target === 'source' ? sourceDb?.availableSchemas : targetDb?.availableSchemas) || [];
+
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [schemaData, setSchemaData] = useState<DatabaseSchemaResponse | null>(null);
@@ -71,24 +75,31 @@ export const SchemaDiagramModal: React.FC<SchemaDiagramModalProps> = ({
       if (data.schema) {
         setSelectedSchema(data.schema);
       }
+      if (data.availableSchemas && data.availableSchemas.length > 0) {
+        setAvailableSchemas(target, data.availableSchemas);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
     } finally {
       setLoading(false);
     }
-  }, [target]);
+  }, [target, setAvailableSchemas]);
 
   useEffect(() => {
     if (isOpen) {
-      fetchSchema();
+      const preferred =
+        dbName && dbName !== '-'
+          ? dbName
+          : storeSchemas[0] || undefined;
+      void fetchSchema(preferred);
     } else {
       setSchemaData(null);
       setError(null);
       setSearchQuery('');
       setSelectedSchema('');
     }
-  }, [isOpen, fetchSchema]);
+  }, [isOpen, dbName, fetchSchema]);
 
   // Convert schema data into React Flow nodes and edges
   useEffect(() => {
@@ -181,8 +192,17 @@ export const SchemaDiagramModal: React.FC<SchemaDiagramModalProps> = ({
 
   if (!isOpen) return null;
 
-  const currentDbName = schemaData?.databaseName || dbName;
+  const currentDbName =
+    schemaData?.databaseName && schemaData.databaseName !== '-'
+      ? schemaData.databaseName
+      : dbName && dbName !== '-'
+      ? dbName
+      : schemaData?.schema || (target === 'source' ? 'Source Database' : 'Target Database');
   const currentSchema = schemaData?.schema || '';
+  const availableSchemaOptions =
+    schemaData?.availableSchemas && schemaData.availableSchemas.length > 0
+      ? schemaData.availableSchemas
+      : storeSchemas;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-3 md:p-6 animate-appearance-in select-none">
@@ -208,7 +228,7 @@ export const SchemaDiagramModal: React.FC<SchemaDiagramModalProps> = ({
                 <div className="flex items-center gap-2 text-xs text-foreground/60">
                   <span className="flex items-center gap-1.5">
                     Schema:
-                    {schemaData?.availableSchemas && schemaData.availableSchemas.length > 1 ? (
+                    {availableSchemaOptions.length > 0 ? (
                       <select
                         aria-label="Select database schema"
                         value={selectedSchema || currentSchema}
@@ -220,9 +240,9 @@ export const SchemaDiagramModal: React.FC<SchemaDiagramModalProps> = ({
                         style={{ colorScheme: 'dark' }}
                         className="bg-default-100 hover:bg-default-200 border border-separator/60 rounded px-1.5 py-0.5 text-xs font-mono font-semibold text-foreground/90 focus:outline-hidden focus:border-primary cursor-pointer transition-colors [color-scheme:dark]"
                       >
-                        {schemaData.availableSchemas.map((s) => (
+                        {availableSchemaOptions.map((s) => (
                           <option key={s} value={s} className="bg-surface text-foreground font-mono">
-                            {s}
+                            {s}{dbName && dbName !== '-' && s === dbName ? ' (Preferred)' : ''}
                           </option>
                         ))}
                       </select>

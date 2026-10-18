@@ -28,8 +28,10 @@ type ConnectionService interface {
 	// TestSshMysql opens the SSH tunnel (if configured) or connects directly to MySQL and
 	// runs a trivial query. Everything is closed before returning.
 	TestSshMysql(ctx context.Context, input domain.SshMysqlConnection) (*domain.ConnectionTestResult, error)
-	SaveActiveSshMysql(ctx context.Context, target string, input domain.SshMysqlConnection) error
+	SaveActiveSshMysql(ctx context.Context, target string, input domain.SshMysqlConnection) (*domain.ActiveConnectionInfo, error)
 	GetActiveConnection(ctx context.Context, target string) (*domain.ActiveConnectionInfo, error)
+	UpdatePreferredSchema(ctx context.Context, target string, schema string) (*domain.ActiveConnectionInfo, error)
+	GetAvailableSchemas(ctx context.Context, target string) ([]string, error)
 	RemoveConnection(ctx context.Context, target string) error
 	GetTelemetry(ctx context.Context, target string) (*domain.TelemetryResponse, error)
 	GetSchema(ctx context.Context, target string, requestedSchema string) (*domain.DatabaseSchemaResponse, error)
@@ -55,10 +57,13 @@ func (s *connectionService) openMysqlSession(ctx context.Context, input domain.S
 	mysqlConfig := mysql.NewConfig()
 	mysqlConfig.User = input.Mysql.User
 	mysqlConfig.Passwd = input.Mysql.Password
-	// For target connections, the schema might not exist yet (replication will create it).
-	// Connect to MySQL server without forcing an initial database.
-	if !strings.EqualFold(input.Target, "target") {
-		mysqlConfig.DBName = input.Mysql.Schema
+	// For target connections or when no default schema is chosen, connect to MySQL server without forcing an initial database.
+	schema := strings.TrimSpace(input.Mysql.Schema)
+	if schema == "-" {
+		schema = ""
+	}
+	if !strings.EqualFold(input.Target, "target") && schema != "" {
+		mysqlConfig.DBName = schema
 	}
 	mysqlConfig.Net = "tcp"
 	mysqlConfig.Addr = net.JoinHostPort(input.Mysql.Host, strconv.Itoa(input.Mysql.Port))
@@ -96,6 +101,48 @@ func (s *connectionService) openMysqlSession(ctx context.Context, input domain.S
 	return db, tun, nil
 }
 
+func isSystemMysqlSchema(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "information_schema", "mysql", "performance_schema", "sys", "":
+		return true
+	default:
+		return false
+	}
+}
+
+func queryAvailableSchemas(ctx context.Context, db *sql.DB) []string {
+	availableSchemas := make([]string, 0)
+	seen := make(map[string]bool)
+
+	schemaRows, err := db.QueryContext(ctx, "SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys') ORDER BY SCHEMA_NAME")
+	if err == nil {
+		for schemaRows.Next() {
+			var sn string
+			if err := schemaRows.Scan(&sn); err == nil && !isSystemMysqlSchema(sn) && !seen[sn] {
+				seen[sn] = true
+				availableSchemas = append(availableSchemas, sn)
+			}
+		}
+		_ = schemaRows.Close()
+	}
+
+	if len(availableSchemas) == 0 {
+		showRows, showErr := db.QueryContext(ctx, "SHOW DATABASES")
+		if showErr == nil {
+			for showRows.Next() {
+				var sn string
+				if err := showRows.Scan(&sn); err == nil && !isSystemMysqlSchema(sn) && !seen[sn] {
+					seen[sn] = true
+					availableSchemas = append(availableSchemas, sn)
+				}
+			}
+			_ = showRows.Close()
+		}
+	}
+
+	return availableSchemas
+}
+
 func (s *connectionService) TestSshMysql(ctx context.Context, input domain.SshMysqlConnection) (*domain.ConnectionTestResult, error) {
 	if err := validateEngine(input.Engine); err != nil {
 		return nil, err
@@ -112,7 +159,11 @@ func (s *connectionService) TestSshMysql(ctx context.Context, input domain.SshMy
 		logger.Field{Key: "mysqlHost", Value: input.Mysql.Host},
 	)
 
-	db, tun, err := s.openMysqlSession(ctx, input)
+	// Validate server-level connection without requiring a pre-selected schema
+	testInput := input
+	testInput.Mysql.Schema = ""
+
+	db, tun, err := s.openMysqlSession(ctx, testInput)
 	if err != nil {
 		log.Error("connection session failed", err)
 		return nil, err
@@ -125,33 +176,17 @@ func (s *connectionService) TestSshMysql(ctx context.Context, input domain.SshMy
 	startedAt := time.Now()
 	var serverVersion string
 	if err := db.QueryRowContext(ctx, "SELECT VERSION()").Scan(&serverVersion); err != nil {
-		// If error is 1049 (Unknown database), retry at server level without the schema
-		if strings.Contains(err.Error(), "1049") || strings.Contains(err.Error(), "Unknown database") {
-			fallbackInput := input
-			fallbackInput.Mysql.Schema = ""
-			fallbackInput.Target = "target"
-			if fbDb, fbTun, fbErr := s.openMysqlSession(ctx, fallbackInput); fbErr == nil {
-				if fbTun != nil {
-					defer fbTun.Close()
-				}
-				defer fbDb.Close()
-				if fbErr := fbDb.QueryRowContext(ctx, "SELECT VERSION()").Scan(&serverVersion); fbErr == nil {
-					log.Info("mysql connection test succeeded without initial schema (schema will be created on replication)")
-					return &domain.ConnectionTestResult{
-						ServerVersion: serverVersion,
-						LatencyMs:     time.Since(startedAt).Milliseconds(),
-					}, nil
-				}
-			}
-		}
 		log.Error("mysql connection query failed", err)
 		return nil, appErrors.New(appErrors.CodeConnection, "cannot connect to mysql", err)
 	}
+	latencyMs := time.Since(startedAt).Milliseconds()
+	availableSchemas := queryAvailableSchemas(ctx, db)
 
 	log.Info("mysql connection test succeeded")
 	return &domain.ConnectionTestResult{
-		ServerVersion: serverVersion,
-		LatencyMs:     time.Since(startedAt).Milliseconds(),
+		ServerVersion:    serverVersion,
+		LatencyMs:        latencyMs,
+		AvailableSchemas: availableSchemas,
 	}, nil
 }
 
@@ -184,22 +219,51 @@ func validateEngine(engine string) error {
 	}
 }
 
-func (s *connectionService) SaveActiveSshMysql(ctx context.Context, target string, input domain.SshMysqlConnection) error {
+func (s *connectionService) SaveActiveSshMysql(ctx context.Context, target string, input domain.SshMysqlConnection) (*domain.ActiveConnectionInfo, error) {
 	if err := validateEngine(input.Engine); err != nil {
-		return err
+		return nil, err
 	}
 	if err := validateMysqlEndpoint(&input.Mysql); err != nil {
-		return err
+		return nil, err
 	}
+	cleanSchema := strings.TrimSpace(input.Mysql.Schema)
+	if cleanSchema == "-" {
+		cleanSchema = ""
+	}
+	input.Mysql.Schema = cleanSchema
+
+	// Probe available schemas when saving connection so they are immediately available in the store and Dashboard
+	probeCtx, cancel := context.WithTimeout(ctx, connectionTestTimeout)
+	defer cancel()
+	probeInput := input
+	probeInput.Mysql.Schema = ""
+	if db, tun, err := s.openMysqlSession(probeCtx, probeInput); err == nil {
+		var serverVer string
+		if err := db.QueryRowContext(probeCtx, "SELECT VERSION()").Scan(&serverVer); err == nil {
+			input.ServerVersion = serverVer
+		}
+		schemas := queryAvailableSchemas(probeCtx, db)
+		input.AvailableSchemas = schemas
+		_ = db.Close()
+		if tun != nil {
+			_ = tun.Close()
+		}
+	}
+	if input.AvailableSchemas == nil {
+		input.AvailableSchemas = []string{}
+	}
+
 	normalizedTarget := strings.ToLower(strings.TrimSpace(target))
 	if normalizedTarget == "target" || strings.ToLower(input.Target) == "target" {
 		input.Target = "target"
+		normalizedTarget = "target"
 		s.activeTargetConnection = &input
 	} else {
 		input.Target = "source"
+		normalizedTarget = "source"
 		s.activeConnection = &input
 	}
-	return nil
+	return s.GetActiveConnection(ctx, normalizedTarget)
 }
 
 func (s *connectionService) GetActiveConnection(ctx context.Context, target string) (*domain.ActiveConnectionInfo, error) {
@@ -216,6 +280,15 @@ func (s *connectionService) GetActiveConnection(ctx context.Context, target stri
 		return nil, nil
 	}
 
+	if len(conn.AvailableSchemas) == 0 {
+		if schemas, err := s.GetAvailableSchemas(ctx, normalizedTarget); err == nil && len(schemas) > 0 {
+			conn.AvailableSchemas = schemas
+		}
+	}
+	if conn.AvailableSchemas == nil {
+		conn.AvailableSchemas = []string{}
+	}
+
 	sanitizedConn := *conn
 	sanitizedConn.Ssh.Password = ""
 	sanitizedConn.Mysql.Password = ""
@@ -225,16 +298,71 @@ func (s *connectionService) GetActiveConnection(ctx context.Context, target stri
 		engine = "-"
 	}
 
+	dbName := strings.TrimSpace(conn.Mysql.Schema)
+	if dbName == "" {
+		dbName = "-"
+	}
+
 	return &domain.ActiveConnectionInfo{
-		Target:      normalizedTarget,
-		Status:      "active",
-		DbName:      conn.Mysql.Schema,
-		ChannelType: conn.ChannelType,
-		Engine:      engine,
-		Username:    conn.Mysql.User,
-		Environment: conn.Environment,
-		Connection:  &sanitizedConn,
+		Target:           normalizedTarget,
+		Status:           "active",
+		DbName:           dbName,
+		ChannelType:      conn.ChannelType,
+		Engine:           engine,
+		Username:         conn.Mysql.User,
+		Environment:      conn.Environment,
+		ServerVersion:    conn.ServerVersion,
+		AvailableSchemas: conn.AvailableSchemas,
+		Connection:       &sanitizedConn,
 	}, nil
+}
+
+func (s *connectionService) UpdatePreferredSchema(ctx context.Context, target string, schema string) (*domain.ActiveConnectionInfo, error) {
+	var conn *domain.SshMysqlConnection
+	normalizedTarget := strings.ToLower(strings.TrimSpace(target))
+	if normalizedTarget == "target" {
+		conn = s.activeTargetConnection
+	} else {
+		conn = s.activeConnection
+		normalizedTarget = "source"
+	}
+
+	if conn == nil {
+		return nil, appErrors.New(appErrors.CodeValidation, "no active connection configured for "+normalizedTarget, nil)
+	}
+
+	cleanSchema := strings.TrimSpace(schema)
+	if cleanSchema == "-" {
+		cleanSchema = ""
+	}
+	conn.Mysql.Schema = cleanSchema
+
+	return s.GetActiveConnection(ctx, normalizedTarget)
+}
+
+func (s *connectionService) GetAvailableSchemas(ctx context.Context, target string) ([]string, error) {
+	raw, err := s.GetRawConnection(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, connectionTestTimeout)
+	defer cancel()
+
+	sessionInput := *raw
+	sessionInput.Mysql.Schema = ""
+
+	db, tun, err := s.openMysqlSession(ctx, sessionInput)
+	if err != nil {
+		s.logger.Error("failed to open session for available schemas", err)
+		return nil, err
+	}
+	if tun != nil {
+		defer tun.Close()
+	}
+	defer db.Close()
+
+	return queryAvailableSchemas(ctx, db), nil
 }
 
 func (s *connectionService) RemoveConnection(ctx context.Context, target string) error {

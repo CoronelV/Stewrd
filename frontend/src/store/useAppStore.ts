@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { mockDashboardState } from '../constants/system/systemConstants';
+import type { SshMysqlConnectionInput } from '../api/requests.interface';
 
 export type ConnectionStatus = 'active' | 'inactive' | 'connecting' | 'pending';
 export type Environment = 'DEV' | 'STG' | 'UAT' | 'PRD' | '-';
@@ -22,6 +23,7 @@ export interface AppNotification {
   message: string;
   status: NotificationStatus;
   persistent?: boolean;
+  dismissible?: boolean;
   actions?: NotificationAction[];
 }
 
@@ -40,6 +42,9 @@ export interface DatabaseInfo {
   engine: string;
   username: string;
   environment: Environment;
+  serverVersion?: string;
+  availableSchemas?: string[];
+  connection?: SshMysqlConnectionInput;
   telemetry?: DbTelemetry;
 }
 
@@ -78,6 +83,8 @@ export interface AppState {
   config: AppConfig;
   setSourceDb: (info: DatabaseInfo | null) => void;
   setTargetDb: (info: DatabaseInfo | null) => void;
+  setAvailableSchemas: (target: ConnectionTarget, schemas: string[]) => void;
+  setPreferredSchema: (target: ConnectionTarget, schema: string) => void;
   setRunningJob: (job: RunningJobInfo | null) => void;
   updateRunningJob: (updates: Partial<RunningJobInfo>) => void;
   toggleTheme: () => void;
@@ -89,13 +96,123 @@ export interface AppState {
   updateConfig: (updates: Partial<AppConfig>) => void;
 }
 
+function mergeDatabaseInfo(prev: DatabaseInfo | null, next: DatabaseInfo | null): DatabaseInfo | null {
+  if (!next) return null;
+  const mergedSchemas =
+    next.availableSchemas && next.availableSchemas.length > 0
+      ? next.availableSchemas
+      : prev?.availableSchemas ?? next.availableSchemas ?? [];
+  const mergedConnection = next.connection
+    ? {
+        ...prev?.connection,
+        ...next.connection,
+        ssh: {
+          ...prev?.connection?.ssh,
+          ...next.connection.ssh,
+          password: next.connection.ssh?.password || prev?.connection?.ssh?.password,
+        },
+        mysql: {
+          ...prev?.connection?.mysql,
+          ...next.connection.mysql,
+          password: next.connection.mysql?.password || prev?.connection?.mysql?.password || '',
+          schema:
+            next.dbName && next.dbName !== '-'
+              ? next.dbName
+              : next.connection.mysql?.schema || undefined,
+        },
+      }
+    : prev?.connection;
+
+  return {
+    ...(next.status === 'active' && prev?.status === 'active'
+      ? {
+          telemetry: prev.telemetry,
+          serverVersion: prev.serverVersion,
+        }
+      : {}),
+    ...next,
+    availableSchemas: mergedSchemas,
+    ...(mergedConnection ? { connection: mergedConnection } : {}),
+  };
+}
+
 export const useAppStore = create<AppState>((set) => ({
   ...mockDashboardState,
   notifications: [],
   config: { telemetryInterval: 30 },
   updateConfig: (updates: Partial<AppConfig>) => set((s) => ({ config: { ...s.config, ...updates } })),
-  setSourceDb: (info) => set({ sourceDb: info }),
-  setTargetDb: (info) => set({ targetDb: info }),
+  setSourceDb: (info) =>
+    set((s) => ({
+      sourceDb: mergeDatabaseInfo(s.sourceDb, info),
+    })),
+  setTargetDb: (info) =>
+    set((s) => ({
+      targetDb: mergeDatabaseInfo(s.targetDb, info),
+    })),
+  setAvailableSchemas: (target, schemas) =>
+    set((s) => {
+      if (target === 'source') {
+        const base = s.sourceDb ?? mockDashboardState.sourceDb!;
+        return {
+          sourceDb: {
+            ...base,
+            availableSchemas: schemas,
+            ...(base.connection ? { connection: { ...base.connection, availableSchemas: schemas } } : {}),
+          },
+        };
+      }
+      const base = s.targetDb ?? mockDashboardState.targetDb!;
+      return {
+        targetDb: {
+          ...base,
+          availableSchemas: schemas,
+          ...(base.connection ? { connection: { ...base.connection, availableSchemas: schemas } } : {}),
+        },
+      };
+    }),
+  setPreferredSchema: (target, schema) =>
+    set((s) => {
+      const normalizedDbName = schema.trim() || '-';
+      if (target === 'source' && s.sourceDb) {
+        return {
+          sourceDb: {
+            ...s.sourceDb,
+            dbName: normalizedDbName,
+            ...(s.sourceDb.connection
+              ? {
+                  connection: {
+                    ...s.sourceDb.connection,
+                    mysql: {
+                      ...s.sourceDb.connection.mysql,
+                      schema: schema.trim() || undefined,
+                    },
+                  },
+                }
+              : {}),
+          },
+        };
+      }
+      if (target === 'target' && s.targetDb) {
+        return {
+          targetDb: {
+            ...s.targetDb,
+            dbName: normalizedDbName,
+            ...(s.targetDb.connection
+              ? {
+                  connection: {
+                    ...s.targetDb.connection,
+                    mysql: {
+                      ...s.targetDb.connection.mysql,
+                      schema: schema.trim() || undefined,
+                    },
+                  },
+                }
+              : {}),
+          },
+        };
+      }
+      return s;
+    }),
   setRunningJob: (job) => set({ runningJob: job }),
   updateRunningJob: (updates) => set((s) => ({
     runningJob: s.runningJob ? { ...s.runningJob, ...updates } : null,

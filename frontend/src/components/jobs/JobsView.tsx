@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardHeader, CardContent, Separator, Button, Chip, Spinner, Input } from '@heroui/react';
 import { useNavigate } from 'react-router-dom';
 import { Play, CheckCircle2, XCircle, AlertTriangle, RefreshCw, Database, Check, X } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { validateReplication, startReplication } from '../../api/jobsApi';
-import { getSchema, getActiveConnection } from '../../api/connectionsApi';
+import { getActiveConnection } from '../../api/connectionsApi';
 import { EnvironmentBadge } from '../common/EnvironmentBadge';
 import { DatabaseEngineIcon } from '../common/DatabaseEngineIcon';
 import { getEngineOption } from '../../constants/database/engineConstants';
@@ -12,20 +12,51 @@ import type { JobValidationResult } from '../../api/requests.interface';
 
 export const JobsView: React.FC = () => {
   const navigate = useNavigate();
-  const { sourceDb, targetDb, runningJob, setRunningJob, addNotification } = useAppStore();
+  const {
+    sourceDb,
+    targetDb,
+    runningJob,
+    setRunningJob,
+    setSourceDb,
+    setTargetDb,
+    addNotification,
+  } = useAppStore();
+
+  const preferredSourceSchema = sourceDb?.dbName && sourceDb.dbName !== '-' ? sourceDb.dbName : '';
+  const preferredTargetSchema = targetDb?.dbName && targetDb.dbName !== '-' ? targetDb.dbName : '';
+
+  const availableSchemas = sourceDb?.availableSchemas || [];
+  const targetAvailableSchemas = targetDb?.availableSchemas || [];
 
   const [sourceSchema, setSourceSchema] = useState<string>(
-    sourceDb?.dbName && sourceDb.dbName !== '-' ? sourceDb.dbName : '',
+    preferredSourceSchema || availableSchemas[0] || '',
   );
-  const [destSchema, setDestSchema] = useState<string>(
-    targetDb?.dbName && targetDb.dbName !== '-' ? targetDb.dbName : 'stewrd_local',
-  );
-  const [availableSchemas, setAvailableSchemas] = useState<string[]>([]);
-  const [isLoadingSchemas, setIsLoadingSchemas] = useState(false);
+  const [destSchema, setDestSchema] = useState<string>(preferredTargetSchema);
+  const userChangedSourceRef = useRef(false);
+  const userChangedTargetRef = useRef(false);
 
   const [isValidating, setIsValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<JobValidationResult | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // Sync default source schema from store unless user manually overrode for this execution
+  useEffect(() => {
+    if (!userChangedSourceRef.current) {
+      const defaultSource =
+        preferredSourceSchema && availableSchemas.includes(preferredSourceSchema)
+          ? preferredSourceSchema
+          : preferredSourceSchema || availableSchemas[0] || '';
+      if (defaultSource) {
+        setSourceSchema(defaultSource);
+      }
+    }
+  }, [preferredSourceSchema, availableSchemas]);
+
+  useEffect(() => {
+    if (!userChangedTargetRef.current && preferredTargetSchema) {
+      setDestSchema(preferredTargetSchema);
+    }
+  }, [preferredTargetSchema]);
 
   // Restore active connections on mount if not already populated
   useEffect(() => {
@@ -38,12 +69,18 @@ export const JobsView: React.FC = () => {
         ]);
         if (!mounted) return;
         if (sourceRes.status === 'fulfilled' && sourceRes.value) {
-          const { connection, ...rest } = sourceRes.value;
-          useAppStore.getState().setSourceDb(rest);
+          const val = sourceRes.value;
+          setSourceDb(val);
+          if (val.dbName && val.dbName !== '-' && !userChangedSourceRef.current) {
+            setSourceSchema(val.dbName);
+          }
         }
         if (targetRes.status === 'fulfilled' && targetRes.value) {
-          const { connection, ...rest } = targetRes.value;
-          useAppStore.getState().setTargetDb(rest);
+          const val = targetRes.value;
+          setTargetDb(val);
+          if (val.dbName && val.dbName !== '-' && !userChangedTargetRef.current) {
+            setDestSchema(val.dbName);
+          }
         }
       } catch (err) {
         console.error('Failed to restore connections in JobsView:', err);
@@ -56,47 +93,22 @@ export const JobsView: React.FC = () => {
     return () => {
       mounted = false;
     };
-  }, [sourceDb?.status, targetDb?.status]);
-
-  // Auto-discover available schemas from the source database
-  useEffect(() => {
-    let mounted = true;
-    const fetchSchemas = async () => {
-      if (sourceDb?.status !== 'active') return;
-      setIsLoadingSchemas(true);
-      try {
-        const schemaRes = await getSchema('source');
-        if (mounted && schemaRes) {
-          const list = schemaRes.availableSchemas || [];
-          setAvailableSchemas(list);
-          if (!sourceSchema && (schemaRes.schema || list.length > 0)) {
-            const defaultSource = schemaRes.schema || (list.length > 0 ? list[0] : '');
-            if (defaultSource) {
-              setSourceSchema(defaultSource);
-              if (!destSchema || destSchema === 'stewrd_local') {
-                setDestSchema(defaultSource);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error('Failed to load source schemas:', err);
-      } finally {
-        if (mounted) setIsLoadingSchemas(false);
-      }
-    };
-
-    void fetchSchemas();
-    return () => {
-      mounted = false;
-    };
-  }, [sourceDb?.status]);
+  }, [sourceDb?.status, targetDb?.status, setSourceDb, setTargetDb]);
 
   const handleRunJob = async () => {
     if (!sourceSchema.trim()) {
       addNotification({
         id: Date.now().toString(),
         message: 'Please define or select the source schema to copy.',
+        status: 'warning',
+      });
+      return;
+    }
+
+    if (!destSchema.trim()) {
+      addNotification({
+        id: Date.now().toString(),
+        message: 'Please enter or select the destination schema name for the backup/replication.',
         status: 'warning',
       });
       return;
@@ -110,7 +122,7 @@ export const JobsView: React.FC = () => {
         sourceTarget: 'source',
         destTarget: 'target',
         sourceSchema: sourceSchema.trim(),
-        destSchema: destSchema.trim() || sourceSchema.trim(),
+        destSchema: destSchema.trim(),
       });
 
       setValidationResult(result);
@@ -223,7 +235,7 @@ export const JobsView: React.FC = () => {
                 <div className="flex flex-col min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-sm truncate">
-                      {sourceDb?.dbName && sourceDb.dbName !== '-' ? sourceDb.dbName : 'Configured Source'}
+                      {sourceDb?.dbName && sourceDb.dbName !== '-' ? sourceDb.dbName : 'No default schema'}
                     </span>
                     <span className="text-[11px] font-semibold px-1.5 py-0.2 rounded bg-default-200/80 text-foreground/80">
                       {getEngineOption(sourceDb?.engine).name}
@@ -241,29 +253,35 @@ export const JobsView: React.FC = () => {
                   <label className="text-xs font-semibold text-foreground/80">
                     Schema to copy:
                   </label>
-                  {isLoadingSchemas && (
-                    <div className="flex items-center gap-1 text-[11px] text-foreground/50">
-                      <Spinner size="sm" />
-                      <span>Loading schemas...</span>
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {preferredSourceSchema && sourceSchema !== preferredSourceSchema && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          userChangedSourceRef.current = false;
+                          setSourceSchema(preferredSourceSchema);
+                        }}
+                        className="text-[11px] text-primary hover:underline cursor-pointer font-medium"
+                      >
+                        Use preferred (&apos;{preferredSourceSchema}&apos;)
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {availableSchemas.length > 0 ? (
                   <select
                     value={sourceSchema}
                     onChange={(e) => {
+                      userChangedSourceRef.current = true;
                       setSourceSchema(e.target.value);
-                      if (destSchema === 'stewrd_local' || destSchema === sourceSchema) {
-                        setDestSchema(e.target.value);
-                      }
                     }}
                     style={{ colorScheme: 'dark' }}
                     className="w-full bg-surface border border-separator text-foreground rounded-lg px-3 py-2 text-xs focus:outline-none focus:border-primary cursor-pointer [color-scheme:dark]"
                   >
                     {availableSchemas.map((s) => (
                       <option key={s} value={s} className="bg-surface text-foreground">
-                        {s}
+                        {s}{s === preferredSourceSchema ? ' (Preferred)' : ''}
                       </option>
                     ))}
                   </select>
@@ -272,17 +290,15 @@ export const JobsView: React.FC = () => {
                     placeholder="Enter schema name to copy (e.g. my_db)"
                     value={sourceSchema}
                     onChange={(e) => {
+                      userChangedSourceRef.current = true;
                       setSourceSchema(e.target.value);
-                      if (!destSchema || destSchema === 'stewrd_local') {
-                        setDestSchema(e.target.value);
-                      }
                     }}
                     variant="primary"
                     required
                   />
                 )}
                 <p className="text-[11px] text-foreground/50">
-                  The origin database schema containing tables and records to replicate.
+                  Defaults to your preferred source schema; you can change it here before running the job.
                 </p>
               </div>
             </div>
@@ -302,7 +318,7 @@ export const JobsView: React.FC = () => {
                 <div className="flex flex-col min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-sm truncate">
-                      {targetDb?.dbName && targetDb.dbName !== '-' ? targetDb.dbName : 'stewrd_local'}
+                      {targetDb?.dbName && targetDb.dbName !== '-' ? targetDb.dbName : 'No default schema'}
                     </span>
                     <span className="text-[11px] font-semibold px-1.5 py-0.2 rounded bg-default-200/80 text-foreground/80">
                       {getEngineOption(targetDb?.engine).name}
@@ -314,33 +330,90 @@ export const JobsView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Destination Schema Input */}
-              <div className="flex flex-col gap-1.5 mt-2 pt-3 border-t border-default-200">
-                <div className="flex items-center justify-between">
+              {/* Destination Schema Input / Selector */}
+              <div className="flex flex-col gap-2 mt-2 pt-3 border-t border-default-200">
+                <div className="flex items-center justify-between gap-2">
                   <label className="text-xs font-semibold text-foreground/80">
-                    Destination schema name:
+                    Destination / backup schema name:
                   </label>
-                  {targetDb?.status !== 'active' && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-xs text-primary h-6 px-2"
-                      onPress={() => navigate('/setup-target')}
-                    >
-                      Configure Target
-                    </Button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {preferredTargetSchema && destSchema !== preferredTargetSchema && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          userChangedTargetRef.current = false;
+                          setDestSchema(preferredTargetSchema);
+                        }}
+                        className="text-[11px] text-primary hover:underline cursor-pointer font-medium"
+                      >
+                        Use preferred (&apos;{preferredTargetSchema}&apos;)
+                      </button>
+                    )}
+                    {sourceSchema && destSchema !== sourceSchema && sourceSchema !== preferredTargetSchema && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          userChangedTargetRef.current = true;
+                          setDestSchema(sourceSchema);
+                        }}
+                        className="text-[11px] text-primary hover:underline cursor-pointer font-medium"
+                      >
+                        Use &apos;{sourceSchema}&apos;
+                      </button>
+                    )}
+                    {targetDb?.status !== 'active' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-xs text-primary h-6 px-2"
+                        onPress={() => navigate('/setup-target')}
+                      >
+                        Configure Target
+                      </Button>
+                    )}
+                  </div>
                 </div>
 
                 <Input
-                  placeholder="stewrd_local"
+                  placeholder={sourceSchema ? `e.g. ${sourceSchema}_backup or ${sourceSchema}` : 'Define backup schema name'}
                   value={destSchema}
-                  onChange={(e) => setDestSchema(e.target.value)}
+                  onChange={(e) => {
+                    userChangedTargetRef.current = true;
+                    setDestSchema(e.target.value);
+                  }}
                   variant="primary"
                   required
                 />
+
+                {targetAvailableSchemas.length > 0 && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-foreground/60 shrink-0">Or select existing:</span>
+                    <select
+                      aria-label="Select existing target schema"
+                      value={targetAvailableSchemas.includes(destSchema) ? destSchema : ''}
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          userChangedTargetRef.current = true;
+                          setDestSchema(e.target.value);
+                        }
+                      }}
+                      style={{ colorScheme: 'dark' }}
+                      className="flex-1 bg-surface border border-separator text-foreground rounded-lg px-2.5 py-1 text-xs focus:outline-none focus:border-primary cursor-pointer [color-scheme:dark]"
+                    >
+                      <option value="" className="bg-surface text-foreground">
+                        -- Choose existing target schema --
+                      </option>
+                      {targetAvailableSchemas.map((s) => (
+                        <option key={s} value={s} className="bg-surface text-foreground font-mono">
+                          {s}{s === preferredTargetSchema ? ' (Preferred)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
                 <p className="text-[11px] text-foreground/50">
-                  Target schema on your local MySQL. Will be automatically created if not present.
+                  Defaults to your preferred target schema; you can define a new schema name or pick another existing schema before executing.
                 </p>
               </div>
             </div>

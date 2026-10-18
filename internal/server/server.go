@@ -21,6 +21,7 @@ type Dependencies struct {
 	TaskService       service.TaskService
 	CatalogService    service.CatalogService
 	ConnectionService service.ConnectionService
+	ComparisonService service.ComparisonService
 	StaticFs          fs.FS // frontend.DistFs(); nil disables the SPA (API only)
 	Logger            logger.Logger
 }
@@ -35,7 +36,7 @@ func New(deps Dependencies) *Server {
 	s := &Server{
 		deps: deps,
 		handlers: newHttpHandlers(
-			deps.JobService, deps.TaskService, deps.CatalogService, deps.ConnectionService, deps.Logger),
+			deps.JobService, deps.TaskService, deps.CatalogService, deps.ConnectionService, deps.ComparisonService, deps.Logger),
 	}
 	s.httpServer = &http.Server{
 		Addr:              net.JoinHostPort(deps.Settings.Host, strconv.Itoa(deps.Settings.Port)),

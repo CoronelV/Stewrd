@@ -1,11 +1,12 @@
 import React from 'react';
-import { Card, CardHeader, CardContent, Input, Button, Separator } from '@heroui/react';
+import { Card, CardHeader, CardContent, Input, Button, Separator, Chip } from '@heroui/react';
 import { labelClass, requiredLabelClass, disabledInputClass } from '../common/formStyles';
 import { EnvironmentSelector } from '../common/EnvironmentSelector';
 import { StatusButton } from '../common/StatusButton';
 import type { ActionStatus } from '../common/StatusButton';
 import type { Environment } from '../../../store/useAppStore';
 import { DatabaseEngineSelector } from '../../common/DatabaseEngineSelector';
+import { Database } from 'lucide-react';
 
 interface AwsDatabaseProps {
   databaseEngine: string;
@@ -14,6 +15,7 @@ interface AwsDatabaseProps {
   localProxyPort: string;
   dbName: string;
   setDbName: (v: string) => void;
+  availableSchemas?: string[];
   username: string;
   setUsername: (v: string) => void;
   password: string;
@@ -34,6 +36,7 @@ export const AwsDatabase: React.FC<AwsDatabaseProps> = ({
   localProxyPort,
   dbName,
   setDbName,
+  availableSchemas = [],
   username,
   setUsername,
   password,
@@ -46,6 +49,8 @@ export const AwsDatabase: React.FC<AwsDatabaseProps> = ({
   onTestConnection,
   onSaveConnection,
 }) => {
+  const isConnectionValidated = testStatus === 'success';
+
   return (
     <Card className={`w-full transition-opacity duration-300 ${!isTunnelEstablished ? "opacity-60" : ""}`}>
       <CardHeader className="flex flex-col items-start gap-1 pb-2">
@@ -94,17 +99,6 @@ export const AwsDatabase: React.FC<AwsDatabaseProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
-              <label className={requiredLabelClass}>Database Name</label>
-              <Input
-                placeholder="postgres"
-                variant="primary"
-                value={dbName}
-                onChange={(e) => setDbName(e.target.value)}
-                required
-                disabled={!isTunnelEstablished}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
               <label className={requiredLabelClass}>Username</label>
               <Input
                 placeholder="db_user"
@@ -115,31 +109,69 @@ export const AwsDatabase: React.FC<AwsDatabaseProps> = ({
                 disabled={!isTunnelEstablished}
               />
             </div>
+
+            <div className="flex items-end gap-2">
+              <div className="flex flex-col gap-1.5 flex-1">
+                <label className={requiredLabelClass}>Password / Token</label>
+                <Input
+                  placeholder="Enter password or generate token"
+                  type="password"
+                  variant="primary"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  disabled={!isTunnelEstablished}
+                />
+              </div>
+              <Button
+                variant="secondary"
+                className="h-10 px-6"
+                onPress={onGenerateToken}
+                isPending={isGenerating}
+                isDisabled={!isTunnelEstablished}
+              >
+                Generate Token
+              </Button>
+            </div>
           </div>
 
-          <div className="flex items-end gap-2">
-            <div className="flex flex-col gap-1.5 flex-1">
-              <label className={requiredLabelClass}>Password / Token</label>
-              <Input
-                placeholder="Enter password or generate token"
-                type="password"
-                variant="primary"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={!isTunnelEstablished}
-              />
+          {/* Post-Validation Preferred Schema Selection */}
+          {isConnectionValidated && (
+            <div className="flex flex-col gap-2.5 p-4 rounded-xl bg-default-100/80 border border-primary/25 animate-appearance-in">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Database size={16} className="text-primary shrink-0" />
+                  <label htmlFor="aws-schema-selector" className={labelClass}>
+                    Preferred DB Schema (Default)
+                  </label>
+                </div>
+                <Chip size="sm" variant="soft" className="text-[11px] font-medium">
+                  Default for all actions
+                </Chip>
+              </div>
+
+              <select
+                id="aws-schema-selector"
+                value={dbName}
+                onChange={(e) => setDbName(e.target.value)}
+                style={{ colorScheme: 'dark' }}
+                className="w-full bg-surface border border-separator text-foreground rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-primary cursor-pointer [color-scheme:dark]"
+              >
+                <option value="" className="bg-surface text-foreground">
+                  No preferred schema (select in each action / define on backup)
+                </option>
+                {availableSchemas.map((schema) => (
+                  <option key={schema} value={schema} className="bg-surface text-foreground font-mono">
+                    {schema}
+                  </option>
+                ))}
+              </select>
+
+              <p className="text-xs text-foreground/60">
+                Select your preferred schema. It will be used as the default for all actions, though you can still change it right before executing any job or comparison.
+              </p>
             </div>
-            <Button
-              variant="secondary"
-              className="h-10 px-6"
-              onPress={onGenerateToken}
-              isPending={isGenerating}
-              isDisabled={!isTunnelEstablished}
-            >
-              Generate Token
-            </Button>
-          </div>
+          )}
 
           <div className="flex flex-wrap justify-end items-center gap-3 mt-4">
             <EnvironmentSelector
@@ -150,8 +182,8 @@ export const AwsDatabase: React.FC<AwsDatabaseProps> = ({
             <StatusButton
               status={testStatus}
               idleText="Test DB Connection"
-              loadingText="Testing..."
-              successText="Success"
+              loadingText="Validating..."
+              successText="Validated"
               variant="tertiary"
               isDisabled={!isTunnelEstablished}
               onPress={onTestConnection}
@@ -165,3 +197,4 @@ export const AwsDatabase: React.FC<AwsDatabaseProps> = ({
     </Card>
   );
 };
+
