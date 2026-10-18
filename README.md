@@ -21,6 +21,7 @@ Stewrd is an advanced data synchronization and masking tool migrating records fr
   - [📂 Project Structure (Monorepo)](#-project-structure-monorepo)
   - [🚀 Deployment and Execution](#-deployment-and-execution)
     - [Standard Deployment](#standard-deployment)
+  - [📍 Project Status \& Roadmap](#-project-status--roadmap)
   - [🛠️ Development Standards \& Commits](#️-development-standards--commits)
   - [⚖️ License](#️-license)
 
@@ -136,6 +137,32 @@ The project separates responsibilities strictly based on SOLID principles:
 Deploying Stewrd requires only two files:
 1.  The Go compiled binary.
 2.  The `appsettings.yaml` configuration file.
+
+## 📍 Project Status & Roadmap
+
+Contributions are welcome! Here is the current work status and what is planned for the future.
+
+### ✅ Current Capabilities
+- **Local Replication:** Creates a full backup in the target database by extracting both the schema and data from the source.
+
+### 🚧 Work in Progress
+- **Data Comparison:** Highlights differences between source and target schemas. It cross-checks tables to display missing or mismatched records in each database.
+
+### 📝 To-Do List
+
+#### 💻 Development 
+- **Record Synchronization:** Allow users to seamlessly sync missing records from the source to the target after running a data comparison.
+- **Advanced Record Sync:** Restructure the target database to inherit IDs (UUIDs or auto-incremental) from the source. Includes a diff-viewer letting users decide what to keep, update, or remove.
+- **Schema Synchronization:** Enable DDL operations based on schema comparisons (e.g., automatically create missing columns or drop obsolete tables).
+- **Data Masking & Anonymization:** Implement real-time masking rules to obfuscate sensitive information (e.g., customer names, emails, PII) during the transfer, ensuring safe backups from production to lower environments.
+- **Database Optimization:** Run verifications to check for index usage, table fragmentation, and overall database health.
+- **Broader Engine Support:** Implement connection capabilities for PostgreSQL and Microsoft SQL Server to expand engine compatibility alongside MySQL.
+
+#### 🥷 Security
+- **Secure Credential Storage:** Safely store source and target database credentials so connections can simply be reawakened on subsequent runs without setting them up from scratch.
+
+#### 🤖 AI
+- **AI-Powered Optimization:** Implement an AI agent that audits the target project's codebase and analyzes the database to automatically recommend and create missing indexes.
 
 ## 🛠️ Development Standards & Commits
 
