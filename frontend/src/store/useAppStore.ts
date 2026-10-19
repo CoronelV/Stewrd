@@ -3,7 +3,8 @@ import { mockDashboardState } from '../constants/system/systemConstants';
 import type { SshMysqlConnectionInput } from '../api/requests.interface';
 
 export type ConnectionStatus = 'active' | 'inactive' | 'connecting' | 'pending';
-export type Environment = 'DEV' | 'STG' | 'UAT' | 'PRD' | '-';
+export const ENVIRONMENTS = ['DEV', 'STG', 'UAT', 'PRD', '-'] as const;
+export type Environment = (typeof ENVIRONMENTS)[number];
 export type ConnectionTarget = 'source' | 'target';
 
 export interface AppConfig {
@@ -94,6 +95,71 @@ export interface AppState {
   updateSourceTelemetry: (tel: DbTelemetry) => void;
   updateTargetTelemetry: (tel: DbTelemetry) => void;
   updateConfig: (updates: Partial<AppConfig>) => void;
+  restoreSessionFromEnv: () => { source: DatabaseInfo | null; target: DatabaseInfo | null };
+}
+
+export function buildDatabaseInfoFromEnv(target: ConnectionTarget): DatabaseInfo | null {
+  const env = import.meta.env;
+  const prefix = target === 'source' ? 'VITE_SOURCE_' : 'VITE_TARGET_';
+
+  const channelType = env[`${prefix}CHANNEL_TYPE`];
+  const engine = env[`${prefix}ENGINE`];
+  const environment = ENVIRONMENTS.find((e) => e === env[`${prefix}ENVIRONMENT`]);
+
+  const dbHost = env[`${prefix}DB_HOST`];
+  const dbPort = Number(env[`${prefix}DB_PORT`]);
+  const dbUser = env[`${prefix}DB_USER`];
+  const dbPassword = env[`${prefix}DB_PASSWORD`] ?? '';
+  const dbSchema = env[`${prefix}DB_SCHEMA`];
+
+  if (!channelType || !engine || !environment || !dbHost || !dbPort || !dbUser) {
+    return null;
+  }
+
+  const isDirect = channelType === 'Direct (Local)';
+  const sshHost = env[`${prefix}SSH_HOST`];
+  const sshPort = Number(env[`${prefix}SSH_PORT`]);
+  const sshUser = env[`${prefix}SSH_USER`];
+
+  if (!isDirect && (!sshHost || !sshPort || !sshUser)) {
+    return null;
+  }
+
+  const connection: SshMysqlConnectionInput = {
+    target,
+    environment,
+    channelType,
+    engine,
+    ssh: isDirect
+      ? { host: '', port: 22, user: '' }
+      : {
+          host: sshHost,
+          port: sshPort,
+          user: sshUser,
+          password: env[`${prefix}SSH_PASSWORD`],
+          privateKeyPath: env[`${prefix}SSH_PRIVATE_KEY_PATH`],
+          insecureIgnoreHostKey: env[`${prefix}SSH_INSECURE_IGNORE_HOST_KEY`] === 'true',
+        },
+    mysql: {
+      host: dbHost,
+      port: dbPort,
+      user: dbUser,
+      password: dbPassword,
+      schema: dbSchema,
+    },
+  };
+
+  return {
+    target,
+    status: 'inactive',
+    dbName: dbSchema || '-',
+    channelType,
+    engine,
+    username: dbUser,
+    environment,
+    availableSchemas: [],
+    connection,
+  };
 }
 
 function mergeDatabaseInfo(prev: DatabaseInfo | null, next: DatabaseInfo | null): DatabaseInfo | null {
@@ -120,6 +186,14 @@ function mergeDatabaseInfo(prev: DatabaseInfo | null, next: DatabaseInfo | null)
               ? next.dbName
               : next.connection.mysql?.schema || undefined,
         },
+        ...(next.connection.aws || prev?.connection?.aws
+          ? {
+              aws: {
+                ...prev?.connection?.aws,
+                ...next.connection.aws,
+              },
+            }
+          : {}),
       }
     : prev?.connection;
 
@@ -141,6 +215,15 @@ export const useAppStore = create<AppState>((set) => ({
   notifications: [],
   config: { telemetryInterval: 30 },
   updateConfig: (updates: Partial<AppConfig>) => set((s) => ({ config: { ...s.config, ...updates } })),
+  restoreSessionFromEnv: () => {
+    const source = buildDatabaseInfoFromEnv('source');
+    const target = buildDatabaseInfoFromEnv('target');
+    set({
+      sourceDb: source,
+      targetDb: target,
+    });
+    return { source, target };
+  },
   setSourceDb: (info) =>
     set((s) => ({
       sourceDb: mergeDatabaseInfo(s.sourceDb, info),

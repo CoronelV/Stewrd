@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardContent, Separator, Chip, Spinner, Button } from '@heroui/react';
-import { ArrowRight, Activity, Clock, Layers, PlayCircle, Database } from 'lucide-react';
+import { ArrowRight, Activity, Clock, Layers, PlayCircle, Database, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '../store/useAppStore';
 import {
@@ -9,6 +9,7 @@ import {
   removeActiveConnection,
   getConnectionSchemas,
   updatePreferredSchema,
+  saveConnection,
 } from '../api/connectionsApi';
 import { getActiveJob } from '../api/jobsApi';
 import { mockDashboardState } from '../constants/system/systemConstants';
@@ -395,11 +396,97 @@ const Dashboard: React.FC = () => {
     updateTargetTelemetry,
     setSourceDb,
     setTargetDb,
+    restoreSessionFromEnv,
     addNotification,
+    updateNotification,
     config,
   } = useAppStore();
   const [selectedSchemaTarget, setSelectedSchemaTarget] = useState<ConnectionTarget | null>(null);
   const [selectedDbInfo, setSelectedDbInfo] = useState<DatabaseInfo | null>(null);
+  const [isRestoringSession, setIsRestoringSession] = useState(false);
+
+  const handleRestoreSession = async () => {
+    setIsRestoringSession(true);
+    const notifId = `restore-session-${Date.now()}`;
+    addNotification({
+      id: notifId,
+      message: 'Restoring session from .env...',
+      status: 'loading',
+    });
+
+    try {
+      const { source, target } = restoreSessionFromEnv();
+
+      if (!source && !target) {
+        updateNotification(notifId, {
+          message: 'No valid source or target configuration found in .env',
+          status: 'error',
+        });
+        return;
+      }
+
+      const connectTarget = async (info: DatabaseInfo | null, targetType: ConnectionTarget) => {
+        if (
+          !info ||
+          !info.connection ||
+          !info.engine ||
+          info.engine === '-' ||
+          !info.connection.mysql.host ||
+          !info.connection.mysql.user
+        ) {
+          return false;
+        }
+        try {
+          const saved = await saveConnection(info.connection, targetType);
+          const resolvedSchemas =
+            saved.availableSchemas && saved.availableSchemas.length > 0
+              ? saved.availableSchemas
+              : info.availableSchemas || [];
+          const activeInfo: DatabaseInfo = {
+            ...info,
+            ...saved,
+            target: targetType,
+            status: 'active',
+            dbName: saved.dbName || info.dbName || '-',
+            availableSchemas: resolvedSchemas,
+            connection: {
+              ...info.connection,
+              availableSchemas: resolvedSchemas,
+            },
+          };
+          if (targetType === 'source') {
+            setSourceDb(activeInfo);
+          } else {
+            setTargetDb(activeInfo);
+          }
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      await Promise.allSettled([
+        connectTarget(source, 'source'),
+        connectTarget(target, 'target'),
+      ]);
+
+      const restoredParts = [source ? 'Source' : null, target ? 'Target' : null]
+        .filter(Boolean)
+        .join(' & ');
+
+      updateNotification(notifId, {
+        message: `${restoredParts} session restored from .env`,
+        status: 'success',
+      });
+    } catch {
+      updateNotification(notifId, {
+        message: 'Failed to restore session from .env',
+        status: 'error',
+      });
+    } finally {
+      setIsRestoringSession(false);
+    }
+  };
 
   const handleOpenSchema = (target: ConnectionTarget, info: DatabaseInfo | null) => {
     if (!info || info.status !== 'active') return;
@@ -632,7 +719,18 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="flex flex-col gap-6">
-      <h2 className="text-2xl font-bold">Dashboard</h2>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-2xl font-bold">Dashboard</h2>
+        <Button
+          variant="secondary"
+          className="font-semibold flex items-center gap-2 shadow-xs"
+          onPress={() => void handleRestoreSession()}
+          isPending={isRestoringSession}
+        >
+          <RotateCcw size={16} />
+          Restore session
+        </Button>
+      </div>
 
       {/* First Section: Status Summary */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

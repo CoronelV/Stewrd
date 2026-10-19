@@ -24,6 +24,13 @@ export interface SshMysqlConnectionInput {
     password: string;
     schema?: string | undefined;
   };
+  aws?: {
+    profile?: string | undefined;
+    bastionHost?: string | undefined;
+    remoteDbHost?: string | undefined;
+    remoteDbPort?: number | undefined;
+    localProxyPort?: number | undefined;
+  };
 }
 
 export interface ActiveConnectionInfo {

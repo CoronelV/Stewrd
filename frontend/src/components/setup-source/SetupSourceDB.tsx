@@ -30,11 +30,13 @@ const SetupSourceDB: React.FC = () => {
   );
 
   // AWS SSM
-  const [awsProfile, setAwsProfile] = useState('');
-  const [bastionHost, setBastionHost] = useState('');
-  const [remoteDbHost, setRemoteDbHost] = useState('');
-  const [remoteDbPort, setRemoteDbPort] = useState('5432');
-  const [localProxyPort, setLocalProxyPort] = useState('');
+  const [awsProfile, setAwsProfile] = useState(sourceDb?.connection?.aws?.profile || '');
+  const [bastionHost, setBastionHost] = useState(sourceDb?.connection?.aws?.bastionHost || '');
+  const [remoteDbHost, setRemoteDbHost] = useState(sourceDb?.connection?.aws?.remoteDbHost || '');
+  const [remoteDbPort, setRemoteDbPort] = useState(String(sourceDb?.connection?.aws?.remoteDbPort || 5432));
+  const [localProxyPort, setLocalProxyPort] = useState(
+    sourceDb?.connection?.aws?.localProxyPort ? String(sourceDb.connection.aws.localProxyPort) : '',
+  );
 
   // SSH
   const [sshHost, setSshHost] = useState(sourceDb?.connection?.ssh?.host || 'ssh.pythonanywhere.com');

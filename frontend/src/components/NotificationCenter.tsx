@@ -38,7 +38,7 @@ const NotificationCenter: React.FC = () => {
   const hasMore = orderedNotifications.length > maxCollapsed;
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] flex flex-col gap-3 pointer-events-none w-[360px] sm:w-[440px] max-w-[calc(100vw-32px)] items-center">
+    <div className="fixed bottom-6 right-10 z-[100] flex flex-col gap-2 pointer-events-none w-auto max-w-[calc(100vw-32px)] items-end">
       {visible.map((n) => {
         const isStatusMonitor = n.id === 'connection-status-monitor';
         const color = n.status === 'success' ? 'bg-success' : n.status === 'error' ? 'bg-danger' : 'bg-warning';
@@ -47,92 +47,44 @@ const NotificationCenter: React.FC = () => {
         if (isStatusMonitor) {
           const sourceActive = sourceDb?.status === 'active';
           const targetActive = targetDb?.status === 'active';
-          const sourceSchema =
-            sourceDb?.dbName && sourceDb.dbName !== '-' ? sourceDb.dbName : null;
-          const targetSchema =
-            targetDb?.dbName && targetDb.dbName !== '-' ? targetDb.dbName : null;
 
           return (
             <div
               key={n.id}
               role="status"
               aria-live="polite"
-              className="bg-surface/95 backdrop-blur-md border border-separator shadow-2xl rounded-xl px-4 py-3 flex flex-col gap-2.5 pointer-events-auto transition-all animate-appearance-in w-full text-foreground"
+              className="bg-surface/95 backdrop-blur-md border border-separator shadow-lg rounded-xl px-3 py-2 flex flex-col gap-1.5 pointer-events-auto transition-all animate-appearance-in text-foreground"
             >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-foreground/60">
-                  {n.title || 'Live Connection Status'}
-                </span>
-                <span className="text-[10px] text-foreground/45 font-medium">
-                  Active Monitor
-                </span>
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground/50 border-b border-separator/40 pb-1">
+                Status
               </div>
-
-              <div className="grid grid-cols-2 gap-2.5">
-                {/* Source Status Pill */}
-                <div
-                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs ${
-                    sourceActive
-                      ? 'bg-success/10 border-success/30 text-foreground'
-                      : 'bg-default-100 border-separator text-foreground/70'
-                  }`}
-                >
-                  <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <div className="flex flex-col gap-1">
+                {/* Source status row */}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="relative flex h-2 w-2 shrink-0">
                     {sourceActive && (
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-success"></span>
                     )}
                     <span
-                      className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-                        sourceActive ? 'bg-success' : 'bg-warning'
-                      }`}
+                      className={`relative inline-flex rounded-full h-2 w-2 ${sourceActive ? 'bg-success' : 'bg-danger'
+                        }`}
                     ></span>
                   </span>
-                  <div className="flex flex-col min-w-0">
-                    <div className="flex items-center gap-1">
-                      <span className="font-bold text-[11px]">Source:</span>
-                      <span className="font-semibold text-[11px] capitalize">
-                        {sourceActive ? 'Connected' : 'Inactive'}
-                      </span>
-                    </div>
-                    {sourceActive && (
-                      <span className="text-[10px] text-foreground/65 font-mono truncate">
-                        {sourceSchema ? `Schema: ${sourceSchema}` : 'No default schema'}
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-[11px] font-medium text-foreground/80">Source</span>
                 </div>
 
-                {/* Target Status Pill */}
-                <div
-                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-xs ${
-                    targetActive
-                      ? 'bg-success/10 border-success/30 text-foreground'
-                      : 'bg-default-100 border-separator text-foreground/70'
-                  }`}
-                >
-                  <span className="relative flex h-2.5 w-2.5 shrink-0">
+                {/* Target status row (just below Source) */}
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="relative flex h-2 w-2 shrink-0">
                     {targetActive && (
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-success"></span>
                     )}
                     <span
-                      className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-                        targetActive ? 'bg-success' : 'bg-warning'
-                      }`}
+                      className={`relative inline-flex rounded-full h-2 w-2 ${targetActive ? 'bg-success' : 'bg-danger'
+                        }`}
                     ></span>
                   </span>
-                  <div className="flex flex-col min-w-0">
-                    <div className="flex items-center gap-1">
-                      <span className="font-bold text-[11px]">Target:</span>
-                      <span className="font-semibold text-[11px] capitalize">
-                        {targetActive ? 'Connected' : 'Inactive'}
-                      </span>
-                    </div>
-                    {targetActive && (
-                      <span className="text-[10px] text-foreground/65 font-mono truncate">
-                        {targetSchema ? `Schema: ${targetSchema}` : 'No default schema'}
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-[11px] font-medium text-foreground/80">Target</span>
                 </div>
               </div>
             </div>
