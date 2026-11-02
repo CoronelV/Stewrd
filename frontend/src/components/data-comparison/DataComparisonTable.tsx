@@ -4,6 +4,7 @@ import { CheckCircle2, Eye, Database, ArrowRightToLine, ArrowLeftToLine } from '
 import type { ComparisonRow, ComparisonFilter, SyncDirection } from '../../api/requests.interface';
 import { RowDiffModal } from './RowDiffModal';
 import { SyncMissingRecordsModal } from './SyncMissingRecordsModal';
+import { UpdateTargetRecordsModal } from './UpdateTargetRecordsModal';
 
 interface DataComparisonTableProps {
   rows: ComparisonRow[];
@@ -27,10 +28,12 @@ interface DataComparisonTableProps {
   syncProgress: number;
   isOtherJobRunning: boolean;
   onSyncMissing: (direction: SyncDirection, rowKeys?: string[]) => void;
+  onUpdateTargetRecords?: (keys: Record<string, unknown>[], columns?: string[]) => Promise<void>;
+  isUpdatingTarget?: boolean;
 }
 
 const isSelectableRow = (row: ComparisonRow): boolean =>
-  row.status === 'only_source' || row.status === 'only_target';
+  row.status === 'only_source' || row.status === 'only_target' || row.status === 'different';
 
 export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
   rows,
@@ -54,9 +57,18 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
   syncProgress,
   isOtherJobRunning,
   onSyncMissing,
+  onUpdateTargetRecords,
+  isUpdatingTarget = false,
 }) => {
   const [selectedRowForModal, setSelectedRowForModal] = useState<ComparisonRow | null>(null);
   const [pendingSync, setPendingSync] = useState<{ direction: SyncDirection; rowKeys: string[]; count: number } | null>(null);
+  const [pendingTargetUpdate, setPendingTargetUpdate] = useState<{
+    rows: ComparisonRow[];
+    keys: Record<string, unknown>[];
+    count: number;
+    singleKeyDisplay?: string;
+    differingColumns?: string[];
+  } | null>(null);
   const [selectAll, setSelectAll] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -64,11 +76,11 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
   // Clear the selection when the compared data changes or a sync finishes
   const uniqueKeysSignature = uniqueKeys.join('|');
   useEffect(() => {
-    if (syncingDirection === null) {
+    if (syncingDirection === null && !isUpdatingTarget) {
       setSelectAll(false);
       setSelectedRowKeys(new Set());
     }
-  }, [tableName, filter, uniqueKeysSignature, sourceSchema, targetSchema, syncingDirection]);
+  }, [tableName, filter, uniqueKeysSignature, sourceSchema, targetSchema, syncingDirection, isUpdatingTarget]);
 
   const selectionEnabled = canSync && rows.some(isSelectableRow);
 
@@ -128,8 +140,29 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
     return { rowKeys, count: rowKeys.length };
   };
 
+  const getDiffSelection = (): { rows: ComparisonRow[]; keys: Record<string, unknown>[]; count: number } => {
+    if (filter !== 'differences') {
+      return { rows: [], keys: [], count: 0 };
+    }
+    if (selectAll) {
+      const diffRows = rows.filter((r) => r.status === 'different');
+      return {
+        rows: diffRows,
+        keys: diffRows.map((r) => r.keyValues),
+        count: totalMatches,
+      };
+    }
+    const diffRows = rows.filter((r) => r.status === 'different' && selectedRowKeys.has(getRowKey(r)));
+    return {
+      rows: diffRows,
+      keys: diffRows.map((r) => r.keyValues),
+      count: diffRows.length,
+    };
+  };
+
   const toTargetSelection = getSelection('source_to_target');
   const toSourceSelection = getSelection('target_to_source');
+  const diffSelection = getDiffSelection();
   const syncButtonsDisabled = isLoading || syncingDirection !== null || isOtherJobRunning;
 
   // Do not render empty database columns if there is no data to show (e.g. target is always empty when inserting source-only records)
@@ -204,12 +237,39 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
           <Chip size="sm" variant="soft" className="font-mono text-[11px] h-5">
             Showing {rows.length.toLocaleString()} of {totalMatches.toLocaleString()}
           </Chip>
-          {(toTargetSelection.count > 0 || toSourceSelection.count > 0 || syncingDirection !== null) && (
+          {(toTargetSelection.count > 0 || toSourceSelection.count > 0 || diffSelection.count > 0 || syncingDirection !== null) && (
             <div className="flex items-center gap-2 ml-2 pl-3 border-l border-default-200">
               {(toTargetSelection.count > 0 || syncingDirection === 'source_to_target') &&
                 renderSyncButton('source_to_target', toTargetSelection)}
               {(toSourceSelection.count > 0 || syncingDirection === 'target_to_source') &&
                 renderSyncButton('target_to_source', toSourceSelection)}
+              {diffSelection.count > 0 && onUpdateTargetRecords && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  isDisabled={syncButtonsDisabled || isUpdatingTarget}
+                  onPress={() => {
+                    setPendingTargetUpdate({
+                      rows: diffSelection.rows,
+                      keys: diffSelection.keys,
+                      count: diffSelection.count,
+                    });
+                  }}
+                  className="h-7 text-[11px] font-semibold gap-1.5 border-amber-500/40 text-amber-500 hover:bg-amber-500/10"
+                >
+                  {isUpdatingTarget ? (
+                    <>
+                      <Spinner size="sm" />
+                      <span>Updating Target…</span>
+                    </>
+                  ) : (
+                    <>
+                      <ArrowRightToLine size={13} />
+                      <span>Update {diffSelection.count.toLocaleString()} in Target</span>
+                    </>
+                  )}
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -430,6 +490,31 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
                               </Chip>
                             )}
 
+                            {isDifferent && onUpdateTargetRecords && (
+                              <Button
+                                isIconOnly
+                                size="sm"
+                                variant="ghost"
+                                isDisabled={isUpdatingTarget || syncButtonsDisabled}
+                                onPress={() => {
+                                  const keyDisplay = Object.entries(row.keyValues)
+                                    .map(([k, v]) => `${k}=${String(v)}`)
+                                    .join(', ');
+                                  setPendingTargetUpdate({
+                                    rows: [row],
+                                    keys: [row.keyValues],
+                                    count: 1,
+                                    singleKeyDisplay: keyDisplay,
+                                    differingColumns: row.differingColumns,
+                                  });
+                                }}
+                                aria-label="Update Target record with Source data"
+                                className="h-6 w-6 min-w-6 text-amber-500/80 hover:text-amber-500 hover:bg-amber-500/10"
+                              >
+                                <ArrowRightToLine size={13} />
+                              </Button>
+                            )}
+
                             <Button
                               isIconOnly
                               size="sm"
@@ -553,6 +638,49 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
         uniqueKeys={uniqueKeys}
         tableName={tableName}
         onClose={() => setSelectedRowForModal(null)}
+        isUpdatingTarget={isUpdatingTarget}
+        onUpdateTarget={(r) => {
+          const keyDisplay = Object.entries(r.keyValues)
+            .map(([k, v]) => `${k}=${String(v)}`)
+            .join(', ');
+          setPendingTargetUpdate({
+            rows: [r],
+            keys: [r.keyValues],
+            count: 1,
+            singleKeyDisplay: keyDisplay,
+            differingColumns: r.differingColumns,
+          });
+        }}
+      />
+
+      {/* Target update confirmation modal */}
+      <UpdateTargetRecordsModal
+        isOpen={pendingTargetUpdate !== null}
+        tableName={tableName}
+        sourceSchema={sourceSchema}
+        targetSchema={targetSchema}
+        sourceEnvironment={sourceEnvironment}
+        targetEnvironment={targetEnvironment}
+        recordCount={pendingTargetUpdate?.count ?? 0}
+        singleKeyDisplay={pendingTargetUpdate?.singleKeyDisplay}
+        differingColumns={pendingTargetUpdate?.differingColumns}
+        isUpdating={isUpdatingTarget}
+        onConfirm={async () => {
+          if (!pendingTargetUpdate || !onUpdateTargetRecords) return;
+          const { keys } = pendingTargetUpdate;
+          try {
+            await onUpdateTargetRecords(keys);
+            setPendingTargetUpdate(null);
+            setSelectedRowForModal(null);
+          } catch (err) {
+            console.error('Update target error:', err);
+          }
+        }}
+        onClose={() => {
+          if (!isUpdatingTarget) {
+            setPendingTargetUpdate(null);
+          }
+        }}
       />
 
       {/* Insert-only sync confirmation */}

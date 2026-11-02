@@ -221,3 +221,19 @@ export interface SyncRecordsRequest {
   direction: SyncDirection;
   rowKeys?: string[];
 }
+
+
+export interface UpdateTargetRecordsRequest {
+  sourceSchema: string;
+  targetSchema: string;
+  table: string;
+  uniqueKeys: string[];
+  keys: Record<string, unknown>[];
+  columns?: string[];
+}
+
+export interface UpdateTargetRecordsResponse {
+  success: boolean;
+  updatedCount: number;
+  message: string;
+}

@@ -22,6 +22,12 @@ Stewrd is an advanced data synchronization and masking tool migrating records fr
   - [🚀 Deployment and Execution](#-deployment-and-execution)
     - [Standard Deployment](#standard-deployment)
   - [📍 Project Status \& Roadmap](#-project-status--roadmap)
+    - [✅ Current Capabilities](#-current-capabilities)
+    - [🚧 Work in Progress](#-work-in-progress)
+    - [📝 To-Do List](#-to-do-list)
+      - [💻 Development](#-development)
+      - [🥷 Security](#-security)
+      - [🤖 AI](#-ai)
   - [🛠️ Development Standards \& Commits](#️-development-standards--commits)
   - [⚖️ License](#️-license)
 
@@ -152,6 +158,7 @@ Contributions are welcome! Here is the current work status and what is planned f
 
 #### 💻 Development 
 - **Record Synchronization:** Allow users to seamlessly sync missing records from the source to the target after running a data comparison.
+- **Update Synchronization:** The frontend should prevent full page reloads when making changes; instead, it must dynamically update only the affected records based on the server's response.
 - **Advanced Record Sync:** Restructure the target database to inherit IDs (UUIDs or auto-incremental) from the source. Includes a diff-viewer letting users decide what to keep, update, or remove.
 - **Schema Synchronization:** Enable DDL operations based on schema comparisons (e.g., automatically create missing columns or drop obsolete tables).
 - **Data Masking & Anonymization:** Implement real-time masking rules to obfuscate sensitive information (e.g., customer names, emails, PII) during the transfer, ensuring safe backups from production to lower environments.

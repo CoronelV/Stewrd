@@ -40,6 +40,7 @@ const (
 	routeComparisonValidateSchemas = apiPrefix + "/comparison/schemas/validate"
 	routeComparisonTables          = apiPrefix + "/comparison/tables"
 	routeComparisonData            = apiPrefix + "/comparison/data"
+	routeComparisonUpdateTarget    = apiPrefix + "/comparison/update-target"
 )
 
 const (
@@ -80,6 +81,7 @@ const (
 	patternGetComparisonValidateSchemas = http.MethodGet + " " + routeComparisonValidateSchemas
 	patternGetComparisonTables          = http.MethodGet + " " + routeComparisonTables
 	patternPostComparisonData           = http.MethodPost + " " + routeComparisonData
+	patternPostComparisonUpdateTarget   = http.MethodPost + " " + routeComparisonUpdateTarget
 )
 
 type httpHandlers struct {
@@ -118,6 +120,7 @@ func (h *httpHandlers) register(mux *http.ServeMux) {
 	mux.HandleFunc(patternGetComparisonValidateSchemas, h.validateComparisonSchemas)
 	mux.HandleFunc(patternGetComparisonTables, h.getComparisonTables)
 	mux.HandleFunc(patternPostComparisonData, h.compareData)
+	mux.HandleFunc(patternPostComparisonUpdateTarget, h.updateTargetRecords)
 }
 
 func (h *httpHandlers) health(w http.ResponseWriter, r *http.Request) {
@@ -405,3 +408,17 @@ func (h *httpHandlers) compareData(w http.ResponseWriter, r *http.Request) {
 	writeJson(w, http.StatusOK, result)
 }
 
+
+func (h *httpHandlers) updateTargetRecords(w http.ResponseWriter, r *http.Request) {
+	input, err := decodeJson[domain.UpdateTargetRecordsRequest](r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	result, err := h.comparison.UpdateTargetRecords(r.Context(), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusOK, result)
+}

@@ -17,6 +17,7 @@ type ComparisonService interface {
 	ValidateSchemas(ctx context.Context, sourceSchema, targetSchema string) (*domain.SchemaValidationResponse, error)
 	GetTablesOverview(ctx context.Context, sourceSchema, targetSchema string) (*domain.TableComparisonOverviewResponse, error)
 	CompareData(ctx context.Context, req domain.ComparisonDataRequest) (*domain.ComparisonDataResponse, error)
+	UpdateTargetRecords(ctx context.Context, req domain.UpdateTargetRecordsRequest) (*domain.UpdateTargetRecordsResponse, error)
 }
 
 type comparisonService struct {
@@ -1122,4 +1123,171 @@ func (s *comparisonService) handleMissingTableSide(
 
 	resp.HasMore = (offset + len(resp.Rows)) < totalMatches
 	return resp, nil
+}
+
+func (s *comparisonService) UpdateTargetRecords(ctx context.Context, req domain.UpdateTargetRecordsRequest) (*domain.UpdateTargetRecordsResponse, error) {
+	req.SourceSchema = strings.TrimSpace(req.SourceSchema)
+	req.TargetSchema = strings.TrimSpace(req.TargetSchema)
+	req.Table = strings.TrimSpace(req.Table)
+
+	if req.SourceSchema == "" || req.TargetSchema == "" || req.Table == "" {
+		return nil, appErrors.New(appErrors.CodeValidation, "sourceSchema, targetSchema and table are required", nil)
+	}
+	if len(req.UniqueKeys) == 0 {
+		return nil, appErrors.New(appErrors.CodeValidation, "uniqueKeys are required to identify records to update", nil)
+	}
+	if len(req.Keys) == 0 {
+		return nil, appErrors.New(appErrors.CodeValidation, "at least one record key must be provided", nil)
+	}
+
+	sourceDB, sourceTun, err := s.connections.OpenSession(ctx, "source")
+	if err != nil {
+		return nil, appErrors.New(appErrors.CodeConnection, "failed to connect to source database", err)
+	}
+	if sourceTun != nil {
+		defer sourceTun.Close()
+	}
+	defer sourceDB.Close()
+
+	targetDB, targetTun, err := s.connections.OpenSession(ctx, "target")
+	if err != nil {
+		return nil, appErrors.New(appErrors.CodeConnection, "failed to connect to target database", err)
+	}
+	if targetTun != nil {
+		defer targetTun.Close()
+	}
+	defer targetDB.Close()
+
+	// 1. Discover columns and writable metadata on both sides
+	sourceCols, err := loadSyncColumns(ctx, sourceDB, req.SourceSchema, req.Table)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load source table columns: %w", err)
+	}
+	targetCols, err := loadSyncColumns(ctx, targetDB, req.TargetSchema, req.Table)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load target table columns: %w", err)
+	}
+
+	sourceColMap := make(map[string]syncColumnMeta, len(sourceCols))
+	for _, c := range sourceCols {
+		sourceColMap[c.name] = c
+	}
+	targetColMap := make(map[string]syncColumnMeta, len(targetCols))
+	for _, c := range targetCols {
+		targetColMap[c.name] = c
+	}
+
+	uniqueKeySet := make(map[string]bool, len(req.UniqueKeys))
+	for _, k := range req.UniqueKeys {
+		uniqueKeySet[k] = true
+	}
+
+	allowedCols := make(map[string]bool)
+	if len(req.Columns) > 0 {
+		for _, col := range req.Columns {
+			allowedCols[col] = true
+		}
+	}
+
+	updatableColumns := make([]string, 0)
+	for _, tc := range targetCols {
+		if uniqueKeySet[tc.name] {
+			continue
+		}
+		if tc.generated {
+			continue
+		}
+		sc, inSource := sourceColMap[tc.name]
+		if !inSource || sc.generated {
+			continue
+		}
+		if len(allowedCols) > 0 && !allowedCols[tc.name] {
+			continue
+		}
+		updatableColumns = append(updatableColumns, tc.name)
+	}
+
+	if len(updatableColumns) == 0 {
+		return nil, appErrors.New(appErrors.CodeValidation, "no updatable columns found between source and target tables", nil)
+	}
+
+	// 2. Fetch the source records
+	sourceRowsByKey, err := fetchRowsByKeys(ctx, sourceDB, req.SourceSchema, req.Table, req.UniqueKeys, req.Keys)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch records from source: %w", err)
+	}
+	if len(sourceRowsByKey) == 0 {
+		return nil, appErrors.New(appErrors.CodeNotFound, "no matching records found in source database", nil)
+	}
+
+	// 3. Begin target transaction and execute updates
+	tx, err := targetDB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start transaction on target: %w", err)
+	}
+	defer tx.Rollback()
+
+	setClauses := make([]string, len(updatableColumns))
+	for i, col := range updatableColumns {
+		setClauses[i] = fmt.Sprintf("`%s` = ?", col)
+	}
+	whereClauses := make([]string, len(req.UniqueKeys))
+	for i, k := range req.UniqueKeys {
+		whereClauses[i] = fmt.Sprintf("`%s` = ?", k)
+	}
+
+	updateSQL := fmt.Sprintf("UPDATE `%s`.`%s` SET %s WHERE %s",
+		req.TargetSchema, req.Table,
+		strings.Join(setClauses, ", "),
+		strings.Join(whereClauses, " AND "),
+	)
+
+	stmt, err := tx.PrepareContext(ctx, updateSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare update statement on target: %w", err)
+	}
+	defer stmt.Close()
+
+	var recordsProcessed int64
+	for _, keyMap := range req.Keys {
+		compareParts := make([]string, len(req.UniqueKeys))
+		for kIdx, kName := range req.UniqueKeys {
+			compareParts[kIdx] = fmt.Sprintf("%v", keyMap[kName])
+		}
+		keyComp := strings.Join(compareParts, "\x00")
+
+		sourceRow, exists := sourceRowsByKey[keyComp]
+		if !exists {
+			continue
+		}
+
+		args := make([]any, 0, len(updatableColumns)+len(req.UniqueKeys))
+		for _, col := range updatableColumns {
+			args = append(args, sourceRow[col])
+		}
+		for _, kName := range req.UniqueKeys {
+			args = append(args, keyMap[kName])
+		}
+
+		_, err := stmt.ExecContext(ctx, args...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update record in target: %w", err)
+		}
+		recordsProcessed++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("failed to commit update transaction on target: %w", err)
+	}
+
+	s.logger.Info("target records updated successfully",
+		logger.Field{Key: "table", Value: req.Table},
+		logger.Field{Key: "recordsUpdated", Value: recordsProcessed},
+	)
+
+	return &domain.UpdateTargetRecordsResponse{
+		Success:      true,
+		UpdatedCount: recordsProcessed,
+		Message:      fmt.Sprintf("Successfully updated %d record(s) in %s.`%s` with data from source.", recordsProcessed, req.TargetSchema, req.Table),
+	}, nil
 }

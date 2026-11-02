@@ -7,6 +7,7 @@ import {
   validateComparisonSchemas,
   getComparisonTables,
   getComparisonData,
+  updateTargetRecords,
 } from '../../api/comparisonApi';
 import { startSyncRecords, getActiveJob } from '../../api/jobsApi';
 import type { RunningJobInfo } from '../../store/useAppStore';
@@ -72,6 +73,7 @@ export const DataComparisonView: React.FC = () => {
   // Insert-only sync state
   const [syncingDirection, setSyncingDirection] = useState<SyncDirection | null>(null);
   const [syncProgress, setSyncProgress] = useState<number>(0);
+  const [isUpdatingTarget, setIsUpdatingTarget] = useState<boolean>(false);
   const isMountedRef = useRef(true);
   useEffect(() => {
     isMountedRef.current = true;
@@ -405,6 +407,66 @@ export const DataComparisonView: React.FC = () => {
     fetchInitialData,
   ]);
 
+  // 8. Update target records with data from source for differing records
+  const handleUpdateTargetRecords = useCallback(
+    async (keys: Record<string, unknown>[], columnsToUpdate?: string[]) => {
+      if (
+        !selectedSourceSchema ||
+        !selectedTargetSchema ||
+        !selectedTableName ||
+        uniqueKeys.length === 0 ||
+        keys.length === 0 ||
+        isUpdatingTarget
+      ) {
+        return;
+      }
+
+      setIsUpdatingTarget(true);
+      try {
+        const res = await updateTargetRecords({
+          sourceSchema: selectedSourceSchema,
+          targetSchema: selectedTargetSchema,
+          table: selectedTableName,
+          uniqueKeys,
+          keys,
+          ...(columnsToUpdate && columnsToUpdate.length > 0 ? { columns: columnsToUpdate } : {}),
+        });
+
+        addNotification({
+          id: Date.now().toString(),
+          message:
+            res.message ??
+            `Successfully updated ${res.updatedCount} target record(s) with data from source.`,
+          status: 'success',
+        });
+
+        // Re-fetch comparison data to reflect updated records
+        await fetchInitialData();
+      } catch (err) {
+        console.error('Failed to update target records:', err);
+        addNotification({
+          id: Date.now().toString(),
+          message: `Failed to update target records: ${String(err)}`,
+          status: 'error',
+        });
+        throw err;
+      } finally {
+        if (isMountedRef.current) {
+          setIsUpdatingTarget(false);
+        }
+      }
+    },
+    [
+      selectedSourceSchema,
+      selectedTargetSchema,
+      selectedTableName,
+      uniqueKeys,
+      isUpdatingTarget,
+      addNotification,
+      fetchInitialData,
+    ],
+  );
+
   // Toggle unique key
   const handleToggleUniqueKey = (col: string) => {
     setUniqueKeys((prev) => {
@@ -545,6 +607,8 @@ export const DataComparisonView: React.FC = () => {
                 syncProgress={syncProgress}
                 isOtherJobRunning={runningJob?.status === 'running' && !syncingDirection}
                 onSyncMissing={(direction, rowKeys) => void handleSyncMissing(direction, rowKeys)}
+                onUpdateTargetRecords={handleUpdateTargetRecords}
+                isUpdatingTarget={isUpdatingTarget}
               />
             </div>
           )}

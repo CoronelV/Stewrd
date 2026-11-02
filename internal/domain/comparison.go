@@ -98,3 +98,18 @@ type ComparisonDataResponse struct {
 	Stats        ComparisonStats `json:"stats"`
 	Rows         []ComparisonRow `json:"rows"`
 }
+
+type UpdateTargetRecordsRequest struct {
+	SourceSchema string           `json:"sourceSchema"`
+	TargetSchema string           `json:"targetSchema"`
+	Table        string           `json:"table"`
+	UniqueKeys   []string         `json:"uniqueKeys"`
+	Keys         []map[string]any `json:"keys"`
+	Columns      []string         `json:"columns,omitempty"`
+}
+
+type UpdateTargetRecordsResponse struct {
+	Success      bool   `json:"success"`
+	UpdatedCount int64  `json:"updatedCount"`
+	Message      string `json:"message"`
+}

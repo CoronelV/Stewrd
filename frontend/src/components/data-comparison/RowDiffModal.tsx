@@ -1,6 +1,6 @@
 import React from 'react';
-import { Button, Chip } from '@heroui/react';
-import { X, GitCompare, Check, AlertTriangle } from 'lucide-react';
+import { Button, Chip, Spinner } from '@heroui/react';
+import { X, GitCompare, Check, AlertTriangle, ArrowRightToLine } from 'lucide-react';
 import type { ComparisonRow } from '../../api/requests.interface';
 
 interface RowDiffModalProps {
@@ -9,6 +9,8 @@ interface RowDiffModalProps {
   uniqueKeys: string[];
   tableName: string;
   onClose: () => void;
+  onUpdateTarget?: (row: ComparisonRow) => void;
+  isUpdatingTarget?: boolean;
 }
 
 export const RowDiffModal: React.FC<RowDiffModalProps> = ({
@@ -17,6 +19,8 @@ export const RowDiffModal: React.FC<RowDiffModalProps> = ({
   uniqueKeys,
   tableName,
   onClose,
+  onUpdateTarget,
+  isUpdatingTarget = false,
 }) => {
   if (!row) return null;
 
@@ -155,7 +159,21 @@ export const RowDiffModal: React.FC<RowDiffModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-separator flex items-center justify-end bg-default-50/50">
+        <div className="p-3 border-t border-separator flex items-center justify-between bg-default-50/50">
+          <div>
+            {row.status === 'different' && onUpdateTarget && (
+              <Button
+                size="sm"
+                variant="secondary"
+                isDisabled={isUpdatingTarget}
+                onPress={() => onUpdateTarget(row)}
+                className="gap-1.5 text-xs font-semibold border-amber-500/40 text-amber-500 hover:bg-amber-500/10"
+              >
+                {isUpdatingTarget ? <Spinner size="sm" /> : <ArrowRightToLine size={14} />}
+                <span>Update Target Record</span>
+              </Button>
+            )}
+          </div>
           <Button size="sm" variant="primary" onPress={onClose}>
             Close
           </Button>

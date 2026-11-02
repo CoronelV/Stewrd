@@ -4,6 +4,8 @@ import type {
   TableComparisonOverviewResponse,
   ComparisonDataRequest,
   ComparisonDataResponse,
+  UpdateTargetRecordsRequest,
+  UpdateTargetRecordsResponse,
 } from './requests.interface';
 import { ApiRequestError } from './connectionsApi';
 
@@ -91,6 +93,29 @@ export async function getComparisonData(
   if (!res.ok || !json?.status || json.data === null) {
     throw new ApiRequestError(
       json?.error?.summary ?? 'Failed to get comparison data',
+      json?.error?.detailed ?? String(res.status),
+      json?.code ?? res.status,
+    );
+  }
+  return json.data;
+}
+
+
+export async function updateTargetRecords(
+  req: UpdateTargetRecordsRequest,
+): Promise<UpdateTargetRecordsResponse> {
+  const res = await fetch('/api/comparison/update-target', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(req),
+  });
+  let json: ApiResponse<UpdateTargetRecordsResponse> | null = null;
+  try {
+    json = (await res.json()) as ApiResponse<UpdateTargetRecordsResponse>;
+  } catch {}
+  if (!res.ok || !json?.status || json.data === null) {
+    throw new ApiRequestError(
+      json?.error?.summary ?? 'Failed to update target records',
       json?.error?.detailed ?? String(res.status),
       json?.code ?? res.status,
     );
