@@ -18,8 +18,6 @@ const getActionClass = (variant?: string) => {
 
 const NotificationCenter: React.FC = () => {
   const notifications = useAppStore((s) => s.notifications);
-  const sourceDb = useAppStore((s) => s.sourceDb);
-  const targetDb = useAppStore((s) => s.targetDb);
   const removeNotification = useAppStore((s) => s.removeNotification);
   const [expanded, setExpanded] = useState(false);
 
@@ -27,69 +25,15 @@ const NotificationCenter: React.FC = () => {
     return null;
   }
 
-  // Keep permanent connection status notification at the bottom of the stack while allowing transient notifications above it
-  const orderedNotifications = [
-    ...notifications.filter((n) => n.id !== 'connection-status-monitor'),
-    ...notifications.filter((n) => n.id === 'connection-status-monitor'),
-  ];
-
-  const maxCollapsed = notifications.some((n) => n.id === 'connection-status-monitor') ? 3 : 2;
-  const visible = expanded ? orderedNotifications : orderedNotifications.slice(0, maxCollapsed);
-  const hasMore = orderedNotifications.length > maxCollapsed;
+  const maxCollapsed = 2;
+  const visible = expanded ? notifications : notifications.slice(0, maxCollapsed);
+  const hasMore = notifications.length > maxCollapsed;
 
   return (
     <div className="fixed bottom-6 right-10 z-[100] flex flex-col gap-2 pointer-events-none w-auto max-w-[calc(100vw-32px)] items-end">
       {visible.map((n) => {
-        const isStatusMonitor = n.id === 'connection-status-monitor';
         const color = n.status === 'success' ? 'bg-success' : n.status === 'error' ? 'bg-danger' : 'bg-warning';
         const isDismissible = n.dismissible !== false;
-
-        if (isStatusMonitor) {
-          const sourceActive = sourceDb?.status === 'active';
-          const targetActive = targetDb?.status === 'active';
-
-          return (
-            <div
-              key={n.id}
-              role="status"
-              aria-live="polite"
-              className="bg-surface/95 backdrop-blur-md border border-separator shadow-lg rounded-xl px-3 py-2 flex flex-col gap-1.5 pointer-events-auto transition-all animate-appearance-in text-foreground"
-            >
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-foreground/50 border-b border-separator/40 pb-1">
-                Status
-              </div>
-              <div className="flex flex-col gap-1">
-                {/* Source status row */}
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="relative flex h-2 w-2 shrink-0">
-                    {sourceActive && (
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-success"></span>
-                    )}
-                    <span
-                      className={`relative inline-flex rounded-full h-2 w-2 ${sourceActive ? 'bg-success' : 'bg-danger'
-                        }`}
-                    ></span>
-                  </span>
-                  <span className="text-[11px] font-medium text-foreground/80">Source</span>
-                </div>
-
-                {/* Target status row (just below Source) */}
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="relative flex h-2 w-2 shrink-0">
-                    {targetActive && (
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 bg-success"></span>
-                    )}
-                    <span
-                      className={`relative inline-flex rounded-full h-2 w-2 ${targetActive ? 'bg-success' : 'bg-danger'
-                        }`}
-                    ></span>
-                  </span>
-                  <span className="text-[11px] font-medium text-foreground/80">Target</span>
-                </div>
-              </div>
-            </div>
-          );
-        }
 
         return (
           <div

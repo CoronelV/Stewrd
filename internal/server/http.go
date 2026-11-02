@@ -338,6 +338,10 @@ func (h *httpHandlers) getActiveJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if jobInfo == nil {
+		writeJson(w, http.StatusOK, struct{}{})
+		return
+	}
 	writeJson(w, http.StatusOK, jobInfo)
 }
 

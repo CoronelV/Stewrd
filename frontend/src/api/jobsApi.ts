@@ -72,9 +72,10 @@ export async function startSyncRecords(req: SyncRecordsRequest): Promise<Running
 }
 
 export async function getActiveJob(): Promise<RunningJobInfo | null> {
-  return fetchJson<RunningJobInfo | null>('/jobs/active', {
+  const job = await fetchJson<RunningJobInfo>('/jobs/active', {
     method: 'GET',
   });
+  return job.jobId ? job : null;
 }
 
 export async function cancelActiveJob(): Promise<void> {

@@ -13,9 +13,11 @@ import SetupTargetDB from './components/setup-target/SetupTargetDB';
 import JobsView from './components/jobs/JobsView';
 import Configuration from './components/Configuration';
 import NotificationCenter from './components/NotificationCenter';
+import SidebarStatus from './components/SidebarStatus';
+import SidebarJobs from './components/SidebarJobs';
 import { DataComparisonView } from './components/data-comparison/DataComparisonView';
-
-const CONNECTION_MONITOR_NOTIF_ID = 'connection-status-monitor';
+import { getActiveJob } from './api/jobsApi';
+import bannerImg from './assets/banner.png';
 
 const App: React.FC = () => {
   const location = useLocation();
@@ -29,8 +31,9 @@ const App: React.FC = () => {
     updateSourceTelemetry,
     updateTargetTelemetry,
     addNotification,
-    removeNotification,
     config,
+    runningJob,
+    setRunningJob,
   } = useAppStore();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
 
@@ -166,6 +169,50 @@ const App: React.FC = () => {
     };
   }, [setSourceDb, setTargetDb]);
 
+  // Restore active job on initial mount
+  useEffect(() => {
+    let mounted = true;
+    const restoreActiveJob = async () => {
+      try {
+        const job = await getActiveJob();
+        if (mounted && job) {
+          setRunningJob(job);
+        }
+      } catch (err) {
+        console.error('Failed to restore active job', err);
+      }
+    };
+
+    void restoreActiveJob();
+    return () => {
+      mounted = false;
+    };
+  }, [setRunningJob]);
+
+  // Poll active job periodically when running
+  useEffect(() => {
+    if (runningJob?.status !== 'running') {
+      return;
+    }
+
+    let mounted = true;
+    const interval = setInterval(async () => {
+      try {
+        const job = await getActiveJob();
+        if (mounted) {
+          setRunningJob(job);
+        }
+      } catch (err) {
+        console.error('Active job poll failed', err);
+      }
+    }, 2000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
+  }, [runningJob?.status, setRunningJob]);
+
   // Global telemetry & connection status polling across all screens
   useEffect(() => {
     let mounted = true;
@@ -216,50 +263,6 @@ const App: React.FC = () => {
     };
   }, [config.telemetryInterval, sourceDb?.status, targetDb?.status, updateSourceTelemetry, updateTargetTelemetry, handleTelemetryError]);
 
-  // Show permanent push notification with Source & Target status on action/config screens;
-  // automatically remove it on Dashboard ('/'), Setup Source ('/setup-source'), and Setup Target ('/setup-target').
-  useEffect(() => {
-    const hideStatusNotification =
-      location.pathname === '/' ||
-      location.pathname === '/setup-source' ||
-      location.pathname === '/setup-target';
-    if (hideStatusNotification) {
-      removeNotification(CONNECTION_MONITOR_NOTIF_ID);
-      return;
-    }
-
-    const sourceActive = sourceDb?.status === 'active';
-    const targetActive = targetDb?.status === 'active';
-    const sourceSchema =
-      sourceDb?.dbName && sourceDb.dbName !== '-' ? ` (${sourceDb.dbName})` : '';
-    const targetSchema =
-      targetDb?.dbName && targetDb.dbName !== '-' ? ` (${targetDb.dbName})` : '';
-
-    const overallStatus =
-      sourceActive && targetActive
-        ? 'success'
-        : sourceActive || targetActive
-        ? 'warning'
-        : 'error';
-
-    addNotification({
-      id: CONNECTION_MONITOR_NOTIF_ID,
-      title: 'Database Connections Status',
-      message: `Source: ${sourceActive ? `Connected${sourceSchema}` : 'Inactive'} • Target: ${targetActive ? `Connected${targetSchema}` : 'Inactive'}`,
-      status: overallStatus,
-      persistent: true,
-      dismissible: false,
-    });
-  }, [
-    location.pathname,
-    sourceDb?.status,
-    sourceDb?.dbName,
-    targetDb?.status,
-    targetDb?.dbName,
-    addNotification,
-    removeNotification,
-  ]);
-
   const actionItems = [
     { label: 'Jobs', path: '/jobs', icon: <PlayCircle size={20} /> },
     { label: 'Data Comparison', path: '/data-comparison', icon: <GitCompare size={20} /> },
@@ -291,16 +294,21 @@ const App: React.FC = () => {
       <NotificationCenter />
       {/* Top Right Logo (Visible only when sidebar is collapsed) */}
       {!isSidebarOpen && (
-        <div className="absolute top-6 right-8 text-foreground/60 opacity-60 font-bold text-2xl tracking-widest pointer-events-none select-none z-50 animate-appearance-in">
-          Stewrd
+        <div className="absolute top-6 right-8 pointer-events-none select-none z-50 animate-appearance-in">
+          <img src={bannerImg} alt="Stewrd" className="h-7 w-auto object-contain opacity-80" />
         </div>
       )}
 
       {/* Sidebar */}
-      <aside className={`border-r border-separator bg-surface flex flex-col p-4 justify-between transition-all duration-300 ${isSidebarOpen ? 'w-64' : 'w-20'}`}>
+      <aside
+        className={`border-r border-separator bg-surface flex flex-col justify-between transition-all duration-300 ${isSidebarOpen ? 'w-64 p-4' : 'w-20 px-2 py-4'
+          }`}
+      >
         <div>
           <div className={`mb-8 flex items-center ${isSidebarOpen ? 'justify-between px-2' : 'justify-center'}`}>
-            {isSidebarOpen && <h1 className="text-2xl font-bold text-foreground/60 opacity-60 tracking-widest">Stewrd</h1>}
+            {isSidebarOpen && (
+              <img src={bannerImg} alt="Stewrd" className="h-7 w-auto max-w-[140px] object-contain select-none" />
+            )}
             <Button
               isIconOnly
               variant="ghost"
@@ -345,20 +353,24 @@ const App: React.FC = () => {
           </nav>
         </div>
 
-        <div className={`flex items-center  justify-center `}>
-          <button
-            onClick={toggleTheme}
-            className={`relative shrink-0 flex items-center p-1 w-12 h-6 rounded-full transition-colors duration-300 focus:outline-hidden ${theme === 'dark' ? 'bg-primary' : 'bg-gray-300'
-              }`}
-            aria-label="Toggle Dark Mode"
-          >
-            <span
-              className={`absolute left-1 w-4 h-4 bg-white rounded-full transition-transform duration-300 flex items-center justify-center shadow-md ${theme === 'dark' ? 'transform translate-x-6' : 'transform translate-x-0'
+        <div className="flex flex-col gap-2.5">
+          <SidebarStatus isSidebarOpen={isSidebarOpen} />
+          <SidebarJobs isSidebarOpen={isSidebarOpen} />
+          <div className="flex items-center justify-center pt-1">
+            <button
+              onClick={toggleTheme}
+              className={`relative shrink-0 flex items-center p-1 w-12 h-6 rounded-full transition-colors duration-300 focus:outline-hidden ${theme === 'dark' ? 'bg-primary' : 'bg-gray-300'
                 }`}
+              aria-label="Toggle Dark Mode"
             >
-              {theme === 'dark' ? <Moon size={10} className="text-black stroke-black" /> : <Sun size={10} className="text-black stroke-black" />}
-            </span>
-          </button>
+              <span
+                className={`absolute left-1 w-4 h-4 bg-white rounded-full transition-transform duration-300 flex items-center justify-center shadow-md ${theme === 'dark' ? 'transform translate-x-6' : 'transform translate-x-0'
+                  }`}
+              >
+                {theme === 'dark' ? <Moon size={10} className="text-black stroke-black" /> : <Sun size={10} className="text-black stroke-black" />}
+              </span>
+            </button>
+          </div>
         </div>
       </aside>
 
