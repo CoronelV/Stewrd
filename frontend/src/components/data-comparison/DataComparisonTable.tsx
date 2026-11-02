@@ -1,8 +1,9 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Card, CardHeader, CardContent, Chip, Spinner, Button } from '@heroui/react';
-import { CheckCircle2, Eye, Database } from 'lucide-react';
-import type { ComparisonRow, ComparisonFilter } from '../../api/requests.interface';
+import { CheckCircle2, Eye, Database, ArrowRightToLine, ArrowLeftToLine } from 'lucide-react';
+import type { ComparisonRow, ComparisonFilter, SyncDirection } from '../../api/requests.interface';
 import { RowDiffModal } from './RowDiffModal';
+import { SyncMissingRecordsModal } from './SyncMissingRecordsModal';
 
 interface DataComparisonTableProps {
   rows: ComparisonRow[];
@@ -15,7 +16,21 @@ interface DataComparisonTableProps {
   totalMatches: number;
   tableName: string;
   onLoadMore: () => void;
+  sourceSchema: string;
+  targetSchema: string;
+  sourceEnvironment?: string | undefined;
+  targetEnvironment?: string | undefined;
+  sourceOnlyCount: number;
+  targetOnlyCount: number;
+  canSync: boolean;
+  syncingDirection: SyncDirection | null;
+  syncProgress: number;
+  isOtherJobRunning: boolean;
+  onSyncMissing: (direction: SyncDirection, rowKeys?: string[]) => void;
 }
+
+const isSelectableRow = (row: ComparisonRow): boolean =>
+  row.status === 'only_source' || row.status === 'only_target';
 
 export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
   rows,
@@ -28,9 +43,134 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
   totalMatches,
   tableName,
   onLoadMore,
+  sourceSchema,
+  targetSchema,
+  sourceEnvironment,
+  targetEnvironment,
+  sourceOnlyCount,
+  targetOnlyCount,
+  canSync,
+  syncingDirection,
+  syncProgress,
+  isOtherJobRunning,
+  onSyncMissing,
 }) => {
   const [selectedRowForModal, setSelectedRowForModal] = useState<ComparisonRow | null>(null);
+  const [pendingSync, setPendingSync] = useState<{ direction: SyncDirection; rowKeys: string[]; count: number } | null>(null);
+  const [selectAll, setSelectAll] = useState(false);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<Set<string>>(() => new Set());
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Clear the selection when the compared data changes or a sync finishes
+  const uniqueKeysSignature = uniqueKeys.join('|');
+  useEffect(() => {
+    if (syncingDirection === null) {
+      setSelectAll(false);
+      setSelectedRowKeys(new Set());
+    }
+  }, [tableName, filter, uniqueKeysSignature, sourceSchema, targetSchema, syncingDirection]);
+
+  const selectionEnabled = canSync && rows.some(isSelectableRow);
+
+  const getRowKey = (row: ComparisonRow): string => {
+    if (row.rowKey) {
+      return row.rowKey;
+    }
+    if (row.keyValues && uniqueKeys.length > 0) {
+      return uniqueKeys.map((k) => String(row.keyValues[k] ?? '')).join('\x00');
+    }
+    if (row.keyValues) {
+      return Object.entries(row.keyValues)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}:${String(v)}`)
+        .join('\x00');
+    }
+    return JSON.stringify(row.sourceData || row.targetData);
+  };
+
+  const isRowChecked = (row: ComparisonRow): boolean => selectAll || selectedRowKeys.has(getRowKey(row));
+
+  const toggleSelectAll = (): void => {
+    setSelectAll((prev) => !prev);
+    setSelectedRowKeys(new Set());
+  };
+
+  const toggleRow = (row: ComparisonRow): void => {
+    const key = getRowKey(row);
+    if (selectAll) {
+      // Leaving "select all": keep every loaded missing record except the one unchecked
+      setSelectAll(false);
+      setSelectedRowKeys(new Set(rows.filter((r) => isSelectableRow(r) && getRowKey(r) !== key).map(getRowKey)));
+      return;
+    }
+    setSelectedRowKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  // "Select all" sends no row keys, meaning every missing record (including rows not loaded yet)
+  const getSelection = (direction: SyncDirection): { rowKeys: string[]; count: number } => {
+    const toTarget = direction === 'source_to_target';
+    if (toTarget ? filter === 'only_target' : filter === 'only_source') {
+      return { rowKeys: [], count: 0 };
+    }
+    if (selectAll) {
+      return { rowKeys: [], count: toTarget ? sourceOnlyCount : targetOnlyCount };
+    }
+    const status = toTarget ? 'only_source' : 'only_target';
+    const rowKeys = rows.filter((r) => r.status === status && selectedRowKeys.has(getRowKey(r))).map(getRowKey);
+    return { rowKeys, count: rowKeys.length };
+  };
+
+  const toTargetSelection = getSelection('source_to_target');
+  const toSourceSelection = getSelection('target_to_source');
+  const syncButtonsDisabled = isLoading || syncingDirection !== null || isOtherJobRunning;
+
+  // Do not render empty database columns if there is no data to show (e.g. target is always empty when inserting source-only records)
+  const hasTargetData = rows.some((r) => r.targetData !== null);
+  const hasSourceData = rows.some((r) => r.sourceData !== null);
+  const showTargetColumns = filter === 'only_target' || (filter === 'differences' && hasTargetData);
+  const showSourceColumns = filter === 'only_source' || (filter === 'differences' && (hasSourceData || !showTargetColumns));
+
+  const renderSyncButton = (direction: SyncDirection, selection: { rowKeys: string[]; count: number }): React.ReactNode => {
+    const toTarget = direction === 'source_to_target';
+    const isSyncing = syncingDirection === direction;
+    return (
+      <Button
+        size="sm"
+        variant="secondary"
+        isDisabled={syncButtonsDisabled}
+        onPress={() => {
+          setPendingSync({ direction, ...selection });
+        }}
+        className={`h-7 text-[11px] font-semibold gap-1.5 ${
+          toTarget
+            ? 'border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/10'
+            : 'border-blue-500/40 text-blue-500 hover:bg-blue-500/10'
+        }`}
+      >
+        {isSyncing ? (
+          <>
+            <Spinner size="sm" />
+            <span>Inserting… {syncProgress}%</span>
+          </>
+        ) : (
+          <>
+            {toTarget ? <ArrowRightToLine size={13} /> : <ArrowLeftToLine size={13} />}
+            <span>
+              Insert {selection.count.toLocaleString()} into {toTarget ? 'Target' : 'Source'}
+            </span>
+          </>
+        )}
+      </Button>
+    );
+  };
 
   // Infinite scroll listener
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -64,21 +204,35 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
           <Chip size="sm" variant="soft" className="font-mono text-[11px] h-5">
             Showing {rows.length.toLocaleString()} of {totalMatches.toLocaleString()}
           </Chip>
+          {(toTargetSelection.count > 0 || toSourceSelection.count > 0 || syncingDirection !== null) && (
+            <div className="flex items-center gap-2 ml-2 pl-3 border-l border-default-200">
+              {(toTargetSelection.count > 0 || syncingDirection === 'source_to_target') &&
+                renderSyncButton('source_to_target', toTargetSelection)}
+              {(toSourceSelection.count > 0 || syncingDirection === 'target_to_source') &&
+                renderSyncButton('target_to_source', toSourceSelection)}
+            </div>
+          )}
         </div>
 
         <div className="flex items-center gap-4 text-[11px] text-foreground/60">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded bg-blue-500/20 border border-blue-500" />
-            <span className="text-blue-500 font-semibold">Source Active</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded bg-emerald-500/20 border border-emerald-500" />
-            <span className="text-emerald-500 font-semibold">Target Active</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded bg-amber-500/20 border border-amber-500" />
-            <span className="text-amber-500 font-semibold">Values Differ</span>
-          </div>
+          {showSourceColumns && (
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded bg-blue-500/20 border border-blue-500" />
+              <span className="text-blue-500 font-semibold">Source Active</span>
+            </div>
+          )}
+          {showTargetColumns && (
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded bg-emerald-500/20 border border-emerald-500" />
+              <span className="text-emerald-500 font-semibold">Target Active</span>
+            </div>
+          )}
+          {showSourceColumns && showTargetColumns && (
+            <div className="flex items-center gap-1.5">
+              <span className="w-2.5 h-2.5 rounded bg-amber-500/20 border border-amber-500" />
+              <span className="text-amber-500 font-semibold">Values Differ</span>
+            </div>
+          )}
         </div>
       </CardHeader>
 
@@ -133,74 +287,96 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
                   {/* Left Column: Identity & Status */}
                   <th
                     rowSpan={2}
-                    className="sticky left-0 z-30 bg-surface border-r border-default-200 py-2.5 px-3 font-bold text-foreground/80 min-w-[200px]"
+                    className="sticky left-0 z-30 bg-surface border-r border-default-200 py-2.5 px-3 font-bold text-foreground/80 min-w-[140px]"
                   >
                     <div className="flex items-center justify-between">
-                      <span>Row / Unique Identity</span>
+                      {selectionEnabled ? (
+                        <input
+                          type="checkbox"
+                          checked={selectAll}
+                          onChange={toggleSelectAll}
+                          disabled={syncingDirection !== null}
+                          title="Select all"
+                          aria-label="Select all"
+                          className="w-3.5 h-3.5 cursor-pointer accent-primary"
+                        />
+                      ) : (
+                        <span />
+                      )}
                       <span className="text-[10px] text-foreground/50 font-normal">Status</span>
                     </div>
                   </th>
 
                   {/* Group 1: Source DB Columns */}
-                  <th
-                    colSpan={columns.length}
-                    className="py-1.5 px-3 bg-blue-500/10 border-b border-r border-blue-500/30 text-center font-bold text-blue-500 uppercase tracking-wider"
-                  >
-                    <div className="inline-flex items-center gap-1.5">
-                      <Database size={13} />
-                      <span>Source Database (Origin)</span>
-                    </div>
-                  </th>
+                  {showSourceColumns && (
+                    <th
+                      colSpan={columns.length}
+                      className={`py-1.5 px-3 bg-blue-500/10 border-b ${
+                        showTargetColumns ? 'border-r border-blue-500/30' : 'border-r-0'
+                      } text-center font-bold text-blue-500 uppercase tracking-wider`}
+                    >
+                      <div className="inline-flex items-center gap-1.5">
+                        <Database size={13} />
+                        <span>Source Database (Origin)</span>
+                      </div>
+                    </th>
+                  )}
 
                   {/* Group 2: Target DB Columns */}
-                  <th
-                    colSpan={columns.length}
-                    className="py-1.5 px-3 bg-emerald-500/10 border-b border-emerald-500/30 text-center font-bold text-emerald-500 uppercase tracking-wider"
-                  >
-                    <div className="inline-flex items-center gap-1.5">
-                      <Database size={13} />
-                      <span>Target Database (Destination)</span>
-                    </div>
-                  </th>
+                  {showTargetColumns && (
+                    <th
+                      colSpan={columns.length}
+                      className="py-1.5 px-3 bg-emerald-500/10 border-b border-r-0 text-center font-bold text-emerald-500 uppercase tracking-wider"
+                    >
+                      <div className="inline-flex items-center gap-1.5">
+                        <Database size={13} />
+                        <span>Target Database (Destination)</span>
+                      </div>
+                    </th>
+                  )}
                 </tr>
 
                 {/* Level 2: Individual Column Names */}
                 <tr className="border-b border-default-200 font-mono text-[10px] uppercase tracking-wider text-foreground/70">
                   {/* Source Columns */}
-                  {columns.map((col) => (
-                    <th
-                      key={`s-col-${col}`}
-                      className="py-1.5 px-3 bg-blue-500/5 text-blue-400 font-semibold truncate max-w-[150px] border-r border-default-100 last:border-r-blue-500/30"
-                      title={col}
-                    >
-                      <span className="flex items-center gap-1">
-                        {col}
-                        {uniqueKeys.includes(col) && (
-                          <span className="text-[8px] px-1 rounded bg-blue-500/20 text-blue-400 font-bold">
-                            KEY
-                          </span>
-                        )}
-                      </span>
-                    </th>
-                  ))}
+                  {showSourceColumns &&
+                    columns.map((col) => (
+                      <th
+                        key={`s-col-${col}`}
+                        className={`py-1.5 px-3 bg-blue-500/5 text-blue-400 font-semibold truncate max-w-[150px] border-r border-default-100 ${
+                          showTargetColumns ? 'last:border-r-blue-500/30' : 'last:border-r-0'
+                        }`}
+                        title={col}
+                      >
+                        <span className="flex items-center gap-1">
+                          {col}
+                          {uniqueKeys.includes(col) && (
+                            <span className="text-[8px] px-1 rounded bg-blue-500/20 text-blue-400 font-bold">
+                              KEY
+                            </span>
+                          )}
+                        </span>
+                      </th>
+                    ))}
 
                   {/* Target Columns */}
-                  {columns.map((col) => (
-                    <th
-                      key={`t-col-${col}`}
-                      className="py-1.5 px-3 bg-emerald-500/5 text-emerald-400 font-semibold truncate max-w-[150px] border-r border-default-100 last:border-r-0"
-                      title={col}
-                    >
-                      <span className="flex items-center gap-1">
-                        {col}
-                        {uniqueKeys.includes(col) && (
-                          <span className="text-[8px] px-1 rounded bg-emerald-500/20 text-emerald-400 font-bold">
-                            KEY
-                          </span>
-                        )}
-                      </span>
-                    </th>
-                  ))}
+                  {showTargetColumns &&
+                    columns.map((col) => (
+                      <th
+                        key={`t-col-${col}`}
+                        className="py-1.5 px-3 bg-emerald-500/5 text-emerald-400 font-semibold truncate max-w-[150px] border-r border-default-100 last:border-r-0"
+                        title={col}
+                      >
+                        <span className="flex items-center gap-1">
+                          {col}
+                          {uniqueKeys.includes(col) && (
+                            <span className="text-[8px] px-1 rounded bg-emerald-500/20 text-emerald-400 font-bold">
+                              KEY
+                            </span>
+                          )}
+                        </span>
+                      </th>
+                    ))}
                 </tr>
               </thead>
 
@@ -211,13 +387,9 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
                   const isOnlyTarget = row.status === 'only_target';
                   const isDifferent = row.status === 'different';
 
-                  const keyString = Object.entries(row.keyValues)
-                    .map(([k, v]) => `${k}:${String(v)}`)
-                    .join(' • ');
-
                   return (
                     <tr
-                      key={`${row.status}-${index}-${keyString}`}
+                      key={`${row.status}-${index}-${getRowKey(row)}`}
                       style={{
                         animation: 'stewrdRowEnter 0.25s ease-out forwards',
                         animationDelay: `${Math.min(index % 50, 10) * 15}ms`,
@@ -227,14 +399,19 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
                       {/* Sticky Left Identity & Status */}
                       <td className="sticky left-0 z-10 bg-surface group-hover:bg-default-100/90 border-r border-default-200 py-2 px-3">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="flex flex-col min-w-0">
-                            <span className="font-bold text-foreground truncate max-w-[130px]">
-                              {keyString}
-                            </span>
-                            <span className="text-[10px] text-foreground/50 font-sans">
-                              Row #{(index + 1).toLocaleString()}
-                            </span>
-                          </div>
+                          {selectionEnabled && isSelectableRow(row) ? (
+                            <input
+                              type="checkbox"
+                              checked={isRowChecked(row)}
+                              onChange={() => {
+                                toggleRow(row);
+                              }}
+                              disabled={syncingDirection !== null}
+                              className="w-3.5 h-3.5 shrink-0 cursor-pointer accent-primary"
+                            />
+                          ) : (
+                            <span />
+                          )}
 
                           <div className="flex items-center gap-1.5 shrink-0">
                             {isOnlySource && (
@@ -268,80 +445,84 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
                       </td>
 
                       {/* Source Columns Data */}
-                      {columns.map((col) => {
-                        const isDiffCol = isDifferent && row.differingColumns.includes(col);
+                      {showSourceColumns &&
+                        columns.map((col) => {
+                          const isDiffCol = isDifferent && row.differingColumns.includes(col);
 
-                        if (isOnlyTarget || row.sourceData === null) {
-                          // In "view only target" or target-only rows: source is empty!
+                          if (isOnlyTarget || row.sourceData === null) {
+                            return (
+                              <td
+                                key={`s-cell-${col}`}
+                                className={`py-2 px-3 text-center bg-blue-500/5 border-r border-default-100 ${
+                                  showTargetColumns ? '' : 'last:border-r-0'
+                                } text-blue-400/30 italic`}
+                              >
+                                —
+                              </td>
+                            );
+                          }
+
+                          const val = row.sourceData[col];
+                          const display = formatCellValue(val);
+
                           return (
                             <td
                               key={`s-cell-${col}`}
-                              className="py-2 px-3 text-center bg-blue-500/5 border-r border-default-100 text-blue-400/30 italic"
+                              className={`py-2 px-3 truncate max-w-[160px] border-r border-default-100 ${
+                                showTargetColumns ? '' : 'last:border-r-0'
+                              } ${
+                                isDiffCol
+                                  ? 'bg-amber-500/20 text-amber-300 font-bold'
+                                  : 'text-blue-300'
+                              }`}
+                              title={display}
                             >
-                              —
+                              {display === 'NULL' ? (
+                                <span className="text-foreground/30 italic">NULL</span>
+                              ) : (
+                                display
+                              )}
                             </td>
                           );
-                        }
-
-                        const val = row.sourceData[col];
-                        const display = formatCellValue(val);
-
-                        return (
-                          <td
-                            key={`s-cell-${col}`}
-                            className={`py-2 px-3 truncate max-w-[160px] border-r border-default-100 ${
-                              isDiffCol
-                                ? 'bg-amber-500/20 text-amber-300 font-bold'
-                                : 'text-blue-300'
-                            }`}
-                            title={display}
-                          >
-                            {display === 'NULL' ? (
-                              <span className="text-foreground/30 italic">NULL</span>
-                            ) : (
-                              display
-                            )}
-                          </td>
-                        );
-                      })}
+                        })}
 
                       {/* Target Columns Data */}
-                      {columns.map((col) => {
-                        const isDiffCol = isDifferent && row.differingColumns.includes(col);
+                      {showTargetColumns &&
+                        columns.map((col) => {
+                          const isDiffCol = isDifferent && row.differingColumns.includes(col);
 
-                        if (isOnlySource || row.targetData === null) {
-                          // In "view only source" or source-only rows: target is empty!
+                          if (isOnlySource || row.targetData === null) {
+                            return (
+                              <td
+                                key={`t-cell-${col}`}
+                                className="py-2 px-3 text-center bg-emerald-500/5 border-r border-default-100 last:border-r-0 text-emerald-400/30 italic"
+                              >
+                                —
+                              </td>
+                            );
+                          }
+
+                          const val = row.targetData[col];
+                          const display = formatCellValue(val);
+
                           return (
                             <td
                               key={`t-cell-${col}`}
-                              className="py-2 px-3 text-center bg-emerald-500/5 border-r border-default-100 text-emerald-400/30 italic"
+                              className={`py-2 px-3 truncate max-w-[160px] border-r border-default-100 last:border-r-0 ${
+                                isDiffCol
+                                  ? 'bg-amber-500/20 text-emerald-300 font-bold'
+                                  : 'text-emerald-300'
+                              }`}
+                              title={display}
                             >
-                              —
+                              {display === 'NULL' ? (
+                                <span className="text-foreground/30 italic">NULL</span>
+                              ) : (
+                                display
+                              )}
                             </td>
                           );
-                        }
-
-                        const val = row.targetData[col];
-                        const display = formatCellValue(val);
-
-                        return (
-                          <td
-                            key={`t-cell-${col}`}
-                            className={`py-2 px-3 truncate max-w-[160px] border-r border-default-100 ${
-                              isDiffCol
-                                ? 'bg-amber-500/20 text-emerald-300 font-bold'
-                                : 'text-emerald-300'
-                            }`}
-                            title={display}
-                          >
-                            {display === 'NULL' ? (
-                              <span className="text-foreground/30 italic">NULL</span>
-                            ) : (
-                              display
-                            )}
-                          </td>
-                        );
-                      })}
+                        })}
                     </tr>
                   );
                 })}
@@ -372,6 +553,25 @@ export const DataComparisonTable: React.FC<DataComparisonTableProps> = ({
         uniqueKeys={uniqueKeys}
         tableName={tableName}
         onClose={() => setSelectedRowForModal(null)}
+      />
+
+      {/* Insert-only sync confirmation */}
+      <SyncMissingRecordsModal
+        direction={pendingSync?.direction ?? null}
+        tableName={tableName}
+        sourceSchema={sourceSchema}
+        targetSchema={targetSchema}
+        sourceEnvironment={sourceEnvironment}
+        targetEnvironment={targetEnvironment}
+        recordCount={pendingSync?.count ?? 0}
+        onConfirm={(direction) => {
+          const rowKeys = pendingSync?.rowKeys ?? [];
+          setPendingSync(null);
+          onSyncMissing(direction, rowKeys.length > 0 ? rowKeys : undefined);
+        }}
+        onClose={() => {
+          setPendingSync(null);
+        }}
       />
     </Card>
   );

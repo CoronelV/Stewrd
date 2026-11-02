@@ -22,9 +22,17 @@ export const TablesOverviewCard: React.FC<TablesOverviewCardProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredTables = tables.filter((t) =>
-    t.tableName.toLowerCase().includes(searchTerm.toLowerCase().trim()),
-  );
+  // Tables with differences (missing on a side or different record count) first, then
+  // matching tables; each group sorted A to Z by table name.
+  const hasDiff = (t: TableOverviewItem): boolean =>
+    !t.existsInSource || !t.existsInTarget || t.sourceCount < 0 || t.targetCount < 0 || t.sourceCount !== t.targetCount;
+
+  const filteredTables = tables
+    .filter((t) => t.tableName.toLowerCase().includes(searchTerm.toLowerCase().trim()))
+    .sort((a, b) => {
+      const diffOrder = Number(hasDiff(b)) - Number(hasDiff(a));
+      return diffOrder !== 0 ? diffOrder : a.tableName.localeCompare(b.tableName, undefined, { sensitivity: 'base' });
+    });
 
   return (
     <Card className="w-full border border-default-200 shadow-sm overflow-hidden">

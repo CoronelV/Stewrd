@@ -27,6 +27,7 @@ type JobService interface {
 
 	ValidateReplication(ctx context.Context, req domain.StartReplicationRequest) (*domain.JobValidationResult, error)
 	StartReplication(ctx context.Context, req domain.StartReplicationRequest) (*domain.RunningJobInfo, error)
+	StartSyncRecords(ctx context.Context, req domain.SyncRecordsRequest) (*domain.RunningJobInfo, error)
 	GetActiveJob(ctx context.Context) (*domain.RunningJobInfo, error)
 	CancelActiveJob(ctx context.Context) error
 }

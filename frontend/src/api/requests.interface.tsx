@@ -187,6 +187,7 @@ export interface ComparisonStats {
 }
 
 export interface ComparisonRow {
+  rowKey: string;
   keyValues: Record<string, unknown>;
   status: 'only_source' | 'only_target' | 'different';
   differingColumns: string[];
@@ -208,4 +209,15 @@ export interface ComparisonDataResponse {
   hasMore: boolean;
   stats: ComparisonStats;
   rows: ComparisonRow[];
+}
+
+export type SyncDirection = 'source_to_target' | 'target_to_source';
+
+export interface SyncRecordsRequest {
+  sourceSchema: string;
+  targetSchema: string;
+  table: string;
+  uniqueKeys: string[];
+  direction: SyncDirection;
+  rowKeys?: string[];
 }

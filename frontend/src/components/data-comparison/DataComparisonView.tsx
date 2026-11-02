@@ -8,12 +8,15 @@ import {
   getComparisonTables,
   getComparisonData,
 } from '../../api/comparisonApi';
+import { startSyncRecords, getActiveJob } from '../../api/jobsApi';
+import type { RunningJobInfo } from '../../store/useAppStore';
 import type {
   SchemaValidationResponse,
   TableOverviewItem,
   ComparisonFilter,
   ComparisonRow,
   ComparisonStats,
+  SyncDirection,
 } from '../../api/requests.interface';
 
 import { CommonSchemaSelector } from './CommonSchemaSelector';
@@ -23,9 +26,11 @@ import { ComparisonFilterTabs } from './ComparisonFilterTabs';
 import { DataComparisonTable } from './DataComparisonTable';
 
 const CHUNK_LIMIT = 50;
+const SYNC_POLL_INTERVAL_MS = 1000;
 
 export const DataComparisonView: React.FC = () => {
-  const { sourceDb, targetDb, setSourceDb, setTargetDb } = useAppStore();
+  const { sourceDb, targetDb, setSourceDb, setTargetDb, runningJob, setRunningJob, addNotification } =
+    useAppStore();
 
   const preferredSourceSchema = sourceDb?.dbName && sourceDb.dbName !== '-' ? sourceDb.dbName : '';
   const preferredTargetSchema = targetDb?.dbName && targetDb.dbName !== '-' ? targetDb.dbName : '';
@@ -63,6 +68,17 @@ export const DataComparisonView: React.FC = () => {
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
 
   const comparisonSectionRef = useRef<HTMLDivElement>(null);
+
+  // Insert-only sync state
+  const [syncingDirection, setSyncingDirection] = useState<SyncDirection | null>(null);
+  const [syncProgress, setSyncProgress] = useState<number>(0);
+  const isMountedRef = useRef(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // 1. Ensure connections are loaded in store if page was refreshed directly on /data-comparison
   useEffect(() => {
@@ -308,6 +324,87 @@ export const DataComparisonView: React.FC = () => {
     filter,
   ]);
 
+  // 7. Insert-only sync of missing records (runs as a background job)
+  const pollSyncJob = useCallback(async (jobId: string | undefined): Promise<RunningJobInfo | null> => {
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, SYNC_POLL_INTERVAL_MS));
+      if (!isMountedRef.current) return null;
+      const job = await getActiveJob();
+      if (!job || (jobId && job.jobId !== jobId)) return job;
+      setRunningJob(job);
+      setSyncProgress(job.jobStats.progress);
+      if (job.status !== 'running') return job;
+    }
+  }, [setRunningJob]);
+
+  const handleSyncMissing = useCallback(async (direction: SyncDirection, rowKeys?: string[]) => {
+    if (!selectedSourceSchema || !selectedTargetSchema || !selectedTableName || syncingDirection) {
+      return;
+    }
+
+    const destinationLabel = direction === 'source_to_target' ? 'Target' : 'Source';
+    setSyncingDirection(direction);
+    setSyncProgress(0);
+    try {
+      const started = await startSyncRecords({
+        sourceSchema: selectedSourceSchema,
+        targetSchema: selectedTargetSchema,
+        table: selectedTableName,
+        uniqueKeys,
+        direction,
+        ...(rowKeys && rowKeys.length > 0 ? { rowKeys } : {}),
+      });
+      setRunningJob(started);
+
+      const finished = await pollSyncJob(started.jobId);
+      if (!isMountedRef.current) return;
+
+      if (finished?.status === 'completed') {
+        addNotification({
+          id: Date.now().toString(),
+          message: finished.resultMessage ?? `Missing records inserted into ${destinationLabel}.`,
+          status: 'success',
+        });
+      } else if (finished?.status === 'failed') {
+        addNotification({
+          id: Date.now().toString(),
+          message: `Sync into ${destinationLabel} failed: ${finished.errorMessage ?? 'unknown error'}`,
+          status: 'error',
+        });
+      } else if (finished?.status === 'cancelled') {
+        addNotification({
+          id: Date.now().toString(),
+          message: `Sync into ${destinationLabel} was cancelled. Records inserted before cancelling were kept.`,
+          status: 'warning',
+        });
+      }
+
+      await fetchInitialData();
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      addNotification({
+        id: Date.now().toString(),
+        message: `Failed to sync missing records into ${destinationLabel}: ${String(err)}`,
+        status: 'error',
+      });
+    } finally {
+      if (isMountedRef.current) {
+        setSyncingDirection(null);
+        setSyncProgress(0);
+      }
+    }
+  }, [
+    selectedSourceSchema,
+    selectedTargetSchema,
+    selectedTableName,
+    syncingDirection,
+    uniqueKeys,
+    setRunningJob,
+    pollSyncJob,
+    addNotification,
+    fetchInitialData,
+  ]);
+
   // Toggle unique key
   const handleToggleUniqueKey = (col: string) => {
     setUniqueKeys((prev) => {
@@ -437,6 +534,17 @@ export const DataComparisonView: React.FC = () => {
                 totalMatches={totalMatches}
                 tableName={selectedTableName}
                 onLoadMore={() => void handleLoadMore()}
+                sourceSchema={selectedSourceSchema}
+                targetSchema={selectedTargetSchema}
+                sourceEnvironment={sourceDb?.environment}
+                targetEnvironment={targetDb?.environment}
+                sourceOnlyCount={stats?.sourceOnlyCount ?? 0}
+                targetOnlyCount={stats?.targetOnlyCount ?? 0}
+                canSync={selectedTableMeta.existsInSource && selectedTableMeta.existsInTarget}
+                syncingDirection={syncingDirection}
+                syncProgress={syncProgress}
+                isOtherJobRunning={runningJob?.status === 'running' && !syncingDirection}
+                onSyncMissing={(direction, rowKeys) => void handleSyncMissing(direction, rowKeys)}
               />
             </div>
           )}

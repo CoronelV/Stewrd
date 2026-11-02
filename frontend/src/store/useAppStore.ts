@@ -73,6 +73,7 @@ export interface RunningJobInfo {
   sourceConnection: ConnectionStats;
   targetConnection: ConnectionStats;
   errorMessage?: string;
+  resultMessage?: string;
 }
 
 export interface AppState {

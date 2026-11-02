@@ -75,6 +75,7 @@ type ComparisonStats struct {
 }
 
 type ComparisonRow struct {
+	RowKey           string         `json:"rowKey"` // opaque identity of the row (stringified unique key values)
 	KeyValues        map[string]any `json:"keyValues"`
 	Status           string         `json:"status"` // "only_source" | "only_target" | "different"
 	DifferingColumns []string       `json:"differingColumns"`

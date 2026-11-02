@@ -48,6 +48,24 @@ type StartReplicationRequest struct {
 	DestSchema   string `json:"destSchema,omitempty"`
 }
 
+const (
+	SyncDirectionSourceToTarget = "source_to_target"
+	SyncDirectionTargetToSource = "target_to_source"
+)
+
+// SyncRecordsRequest describes an insert-only synchronization of the records
+// that exist on one side of a comparison but are missing on the other side.
+type SyncRecordsRequest struct {
+	SourceSchema string   `json:"sourceSchema"`
+	TargetSchema string   `json:"targetSchema"`
+	Table        string   `json:"table"`
+	UniqueKeys   []string `json:"uniqueKeys"`
+	Direction    string   `json:"direction"` // "source_to_target" | "target_to_source"
+	// RowKeys optionally restricts the sync to specific rows (ComparisonRow.RowKey values).
+	// When empty, every missing record is inserted.
+	RowKeys []string `json:"rowKeys,omitempty"`
+}
+
 type RunningJobStats struct {
 	Progress       int    `json:"progress"`
 	Eta            string `json:"eta"`
@@ -72,4 +90,5 @@ type RunningJobInfo struct {
 	SourceConnection ConnectionStats `json:"sourceConnection"`
 	TargetConnection ConnectionStats `json:"targetConnection"`
 	ErrorMessage     *string         `json:"errorMessage,omitempty"`
+	ResultMessage    *string         `json:"resultMessage,omitempty"`
 }

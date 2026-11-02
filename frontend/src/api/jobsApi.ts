@@ -1,6 +1,7 @@
 import type {
   JobValidationResult,
   StartReplicationRequest,
+  SyncRecordsRequest,
 } from './requests.interface';
 import type { RunningJobInfo } from '../store/useAppStore';
 import { ApiRequestError } from './connectionsApi';
@@ -58,6 +59,13 @@ export async function startReplication(
   req: StartReplicationRequest = { sourceTarget: 'source', destTarget: 'target' },
 ): Promise<RunningJobInfo> {
   return fetchJson<RunningJobInfo>('/jobs/replicate-local/start', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  });
+}
+
+export async function startSyncRecords(req: SyncRecordsRequest): Promise<RunningJobInfo> {
+  return fetchJson<RunningJobInfo>('/jobs/sync-records/start', {
     method: 'POST',
     body: JSON.stringify(req),
   });

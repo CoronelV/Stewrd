@@ -32,6 +32,7 @@ const (
 
 	routeJobReplicateValidate = apiPrefix + "/jobs/replicate-local/validate"
 	routeJobReplicateStart    = apiPrefix + "/jobs/replicate-local/start"
+	routeJobSyncRecordsStart  = apiPrefix + "/jobs/sync-records/start"
 	routeJobActive            = apiPrefix + "/jobs/active"
 	routeJobActiveCancel      = apiPrefix + "/jobs/active/cancel"
 
@@ -71,6 +72,7 @@ const (
 
 	patternValidateReplication = http.MethodPost + " " + routeJobReplicateValidate
 	patternStartReplication    = http.MethodPost + " " + routeJobReplicateStart
+	patternStartSyncRecords    = http.MethodPost + " " + routeJobSyncRecordsStart
 	patternGetActiveJob        = http.MethodGet + " " + routeJobActive
 	patternCancelActiveJob     = http.MethodPost + " " + routeJobActiveCancel
 
@@ -109,6 +111,7 @@ func (h *httpHandlers) register(mux *http.ServeMux) {
 	mux.HandleFunc(patternGetSchema, h.getSchema)
 	mux.HandleFunc(patternValidateReplication, h.validateReplication)
 	mux.HandleFunc(patternStartReplication, h.startReplication)
+	mux.HandleFunc(patternStartSyncRecords, h.startSyncRecords)
 	mux.HandleFunc(patternGetActiveJob, h.getActiveJob)
 	mux.HandleFunc(patternCancelActiveJob, h.cancelActiveJob)
 	mux.HandleFunc(patternGetComparisonSchemas, h.getComparisonSchemas)
@@ -308,6 +311,20 @@ func (h *httpHandlers) validateReplication(w http.ResponseWriter, r *http.Reques
 func (h *httpHandlers) startReplication(w http.ResponseWriter, r *http.Request) {
 	input, _ := decodeJson[domain.StartReplicationRequest](r)
 	jobInfo, err := h.jobs.StartReplication(r.Context(), input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJson(w, http.StatusAccepted, jobInfo)
+}
+
+func (h *httpHandlers) startSyncRecords(w http.ResponseWriter, r *http.Request) {
+	input, err := decodeJson[domain.SyncRecordsRequest](r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	jobInfo, err := h.jobs.StartSyncRecords(r.Context(), input)
 	if err != nil {
 		writeError(w, err)
 		return

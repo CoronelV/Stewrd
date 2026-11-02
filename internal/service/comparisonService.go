@@ -621,11 +621,11 @@ func (s *comparisonService) CompareData(ctx context.Context, req domain.Comparis
 	uniqueKeys = validCommonKeys
 
 	// Fetch keys & row hashes from both databases
-	sourceItems, err := s.fetchKeysAndHashes(ctx, sourceDB, sourceSchema, table, uniqueKeys, commonColumns)
+	sourceItems, err := fetchKeysAndHashes(ctx, sourceDB, sourceSchema, table, uniqueKeys, commonColumns, compareMaxRows)
 	if err != nil {
 		return nil, fmt.Errorf("failed fetching source table keys: %w", err)
 	}
-	targetItems, err := s.fetchKeysAndHashes(ctx, targetDB, targetSchema, table, uniqueKeys, commonColumns)
+	targetItems, err := fetchKeysAndHashes(ctx, targetDB, targetSchema, table, uniqueKeys, commonColumns, compareMaxRows)
 	if err != nil {
 		return nil, fmt.Errorf("failed fetching target table keys: %w", err)
 	}
@@ -754,11 +754,11 @@ func (s *comparisonService) CompareData(ctx context.Context, req domain.Comparis
 		}
 	}
 
-	sourceDataMap, err := s.fetchRowsByKeys(ctx, sourceDB, sourceSchema, table, uniqueKeys, sourcePageKeys)
+	sourceDataMap, err := fetchRowsByKeys(ctx, sourceDB, sourceSchema, table, uniqueKeys, sourcePageKeys)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch page rows from source: %w", err)
 	}
-	targetDataMap, err := s.fetchRowsByKeys(ctx, targetDB, targetSchema, table, uniqueKeys, targetPageKeys)
+	targetDataMap, err := fetchRowsByKeys(ctx, targetDB, targetSchema, table, uniqueKeys, targetPageKeys)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch page rows from target: %w", err)
 	}
@@ -766,6 +766,7 @@ func (s *comparisonService) CompareData(ctx context.Context, req domain.Comparis
 	rows := make([]domain.ComparisonRow, 0, len(pagedDiffs))
 	for _, d := range pagedDiffs {
 		compRow := domain.ComparisonRow{
+			RowKey:           d.keyCompare,
 			KeyValues:        d.keyValues,
 			Status:           d.status,
 			DifferingColumns: make([]string, 0),
@@ -823,12 +824,20 @@ func compareValuesEqual(v1, v2 any) bool {
 	return fmt.Sprintf("%v", v1) == fmt.Sprintf("%v", v2)
 }
 
-func (s *comparisonService) fetchKeysAndHashes(
+// compareMaxRows caps how many keys are loaded per side for interactive comparisons.
+const compareMaxRows = 100000
+
+// fetchKeysAndHashes loads the unique key values (and a row hash of columnsForHash) of every
+// row in the table. maxRows <= 0 means no limit. The result is sorted by keyCompare using Go
+// string ordering so that merge walks between source and target are consistent regardless
+// of MySQL column types/collations.
+func fetchKeysAndHashes(
 	ctx context.Context,
 	db *sql.DB,
 	schema, table string,
 	uniqueKeys []string,
 	columnsForHash []string,
+	maxRows int,
 ) ([]keyHashItem, error) {
 	quotedKeys := make([]string, len(uniqueKeys))
 	for i, k := range uniqueKeys {
@@ -846,13 +855,16 @@ func (s *comparisonService) fetchKeysAndHashes(
 		hashExpr = "MD5('empty')"
 	}
 
-	query := fmt.Sprintf("SELECT %s, %s AS row_hash FROM `%s`.`%s` ORDER BY %s LIMIT 100000",
+	query := fmt.Sprintf("SELECT %s, %s AS row_hash FROM `%s`.`%s` ORDER BY %s",
 		strings.Join(quotedKeys, ", "),
 		hashExpr,
 		schema,
 		table,
 		strings.Join(quotedKeys, ", "),
 	)
+	if maxRows > 0 {
+		query += fmt.Sprintf(" LIMIT %d", maxRows)
+	}
 
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
@@ -895,11 +907,20 @@ func (s *comparisonService) fetchKeysAndHashes(
 			rowHash:    hashVal,
 		})
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
-	return items, rows.Err()
+	// MySQL ORDER BY sorts numerically / by collation, while the merge walk compares the
+	// stringified keys; re-sort here so both sides follow the same ordering.
+	sort.Slice(items, func(a, b int) bool {
+		return items[a].keyCompare < items[b].keyCompare
+	})
+
+	return items, nil
 }
 
-func (s *comparisonService) fetchRowsByKeys(
+func fetchRowsByKeys(
 	ctx context.Context,
 	db *sql.DB,
 	schema, table string,
@@ -1079,11 +1100,14 @@ func (s *comparisonService) handleMissingTableSide(
 		}
 
 		keyMap := make(map[string]any, len(uniqueKeys))
-		for _, k := range uniqueKeys {
+		compareParts := make([]string, len(uniqueKeys))
+		for i, k := range uniqueKeys {
 			keyMap[k] = rowMap[k]
+			compareParts[i] = fmt.Sprintf("%v", rowMap[k])
 		}
 
 		compRow := domain.ComparisonRow{
+			RowKey:           strings.Join(compareParts, "\x00"),
 			KeyValues:        keyMap,
 			Status:           activeSide,
 			DifferingColumns: make([]string, 0),
